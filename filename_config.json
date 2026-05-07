@@ -1,0 +1,12 @@
+{
+  "filename_fields": [
+    "date",
+    "name"
+  ],
+  "available_fields": [
+    "date",
+    "name",
+    "email",
+    "phone"
+  ]
+}
