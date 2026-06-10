@@ -1,14 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_all
 
 
 playwright_datas, playwright_binaries, playwright_hiddenimports = collect_all("playwright")
 
-local_appdata = os.environ.get("LOCALAPPDATA", "")
-playwright_browser_dir = os.path.join(local_appdata, "ms-playwright")
+if sys.platform == "win32":
+    playwright_browser_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
+elif sys.platform == "darwin":
+    playwright_browser_dir = os.path.expanduser("~/Library/Caches/ms-playwright")
+else:
+    playwright_browser_dir = os.path.expanduser("~/.cache/ms-playwright")
+
 if not os.path.isdir(playwright_browser_dir):
     raise SystemExit(
         "Playwright Chromium is not installed. Run: python -m playwright install chromium"

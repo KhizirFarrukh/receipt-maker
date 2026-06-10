@@ -20,21 +20,17 @@ APP_SETTINGS_FILE = os.path.join(APP_DIR, "appsettings.json")
 FILENAME_CONFIG_FILE = os.path.join(APP_DIR, "filename_config.json")
 OUTPUT_DIR = os.path.join(APP_DIR, "invoices")
 PDF_MARGIN_TOP = "150px"
-PDF_MARGIN_BOTTOM = "84px"
+PDF_MARGIN_BOTTOM = "120px"
 PDF_MARGIN_LEFT = "40px"
 PDF_MARGIN_RIGHT = "40px"
 
 if getattr(sys, "frozen", False):
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(RESOURCE_DIR, "ms-playwright"))
 
-# ------------------- receipt type config -------------------
-# Maps the human-readable type to the single-letter prefix used in invoice numbers.
-RECEIPT_TYPES = {
-    "Online":   "W",   # web
-    "In Store": "S",   # store
-}
-INVOICE_PREFIX_BASE = "INV-"
-INVOICE_START_NUMBER = 1001  # first number for a fresh series, e.g. INV-W1001 / INV-S1001
+# ------------------- invoice numbering config -------------------
+# All receipts share a single invoice series.
+INVOICE_PREFIX = "INV-"
+INVOICE_START_NUMBER = 1001  # first number for a fresh series, e.g. INV-1001
 DATE_DISPLAY_FORMAT = "%d %b %Y"
 DATE_PARSE_FORMATS = (
     DATE_DISPLAY_FORMAT,
@@ -141,27 +137,15 @@ class ReceiptApp:
         main_frame = ttk.Frame(root, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # row 0: receipt type, invoice no, date
-        ttk.Label(main_frame, text="Receipt Type").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-        self.receipt_type = tk.StringVar(value="Online")
-        type_combo = ttk.Combobox(
-            main_frame,
-            textvariable=self.receipt_type,
-            values=list(RECEIPT_TYPES.keys()),
-            state="readonly",
-            width=12,
-        )
-        type_combo.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
-        type_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_invoice_number())
-
-        ttk.Label(main_frame, text="Invoice No.").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        # row 0: invoice no, date
+        ttk.Label(main_frame, text="Invoice No.").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
         self.inv_no = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.inv_no, width=18).grid(row=0, column=3, padx=5, pady=2, sticky=tk.W)
+        ttk.Entry(main_frame, textvariable=self.inv_no, width=18).grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
 
-        ttk.Label(main_frame, text="Date").grid(row=0, column=4, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(main_frame, text="Date").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
         self.date = tk.StringVar(value=date.today().strftime(DATE_DISPLAY_FORMAT))
         self.date_entry = ttk.Entry(main_frame, textvariable=self.date, width=15)
-        self.date_entry.grid(row=0, column=5, padx=5, pady=2, sticky=tk.W)
+        self.date_entry.grid(row=0, column=3, padx=5, pady=2, sticky=tk.W)
         self.date_entry.bind("<Button-1>", self.show_date_picker)
         self.date_entry.bind("<Down>", self.show_date_picker)
 
@@ -174,18 +158,10 @@ class ReceiptApp:
         self.cust_phone = tk.StringVar()
         ttk.Entry(main_frame, textvariable=self.cust_phone, width=15).grid(row=1, column=4, padx=5, pady=2)
 
-        # row 2: email + payment
+        # row 2: email
         ttk.Label(main_frame, text="Email").grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
         self.cust_email = tk.StringVar()
         ttk.Entry(main_frame, textvariable=self.cust_email, width=30).grid(row=2, column=1, columnspan=2, padx=5, pady=2)
-
-        ttk.Label(main_frame, text="Payment").grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
-        self.payment = tk.StringVar(value="Cash")
-        ttk.Combobox(
-            main_frame,
-            textvariable=self.payment,
-            values=["Cash", "Bank Transfer", "JazzCash / EasyPaisa", "Credit/Debit Card"],
-        ).grid(row=2, column=4, columnspan=2, padx=5, pady=2, sticky=tk.W)
 
         # --- items frame ---
         items_frame = ttk.LabelFrame(main_frame, text="Items", padding=5)
@@ -233,15 +209,16 @@ class ReceiptApp:
         self.refresh_invoice_number()
 
     # ------------------- invoice numbering -------------------
-    def get_invoice_prefix(self, type_label=None):
-        type_label = type_label or self.receipt_type.get()
-        return f"{INVOICE_PREFIX_BASE}{RECEIPT_TYPES[type_label]}"
-
-    def get_next_invoice_number(self, prefix):
+    def get_next_invoice_number(self):
         if not os.path.exists(OUTPUT_DIR):
             os.makedirs(OUTPUT_DIR)
         max_num = INVOICE_START_NUMBER - 1
-        pattern = re.compile(rf"^{re.escape(prefix)}(\d+)(?:-.*)?\.pdf$", re.IGNORECASE)
+        # Matches the current INV-<number> series as well as any legacy
+        # INV-W<number> / INV-S<number> files, so numbering never collides.
+        pattern = re.compile(
+            rf"^{re.escape(INVOICE_PREFIX)}[A-Za-z]?(\d+)(?:-.*)?\.pdf$",
+            re.IGNORECASE,
+        )
         for fname in os.listdir(OUTPUT_DIR):
             match = pattern.match(fname)
             if match:
@@ -251,9 +228,8 @@ class ReceiptApp:
         return max_num + 1
 
     def refresh_invoice_number(self):
-        prefix = self.get_invoice_prefix()
-        next_num = self.get_next_invoice_number(prefix)
-        self.inv_no.set(f"{prefix}{next_num}")
+        next_num = self.get_next_invoice_number()
+        self.inv_no.set(f"{INVOICE_PREFIX}{next_num}")
 
     # ------------------- date picker -------------------
     def parse_selected_date(self):
@@ -449,12 +425,10 @@ class ReceiptApp:
 
     def clear_form(self):
         self.close_date_picker()
-        self.receipt_type.set("Online")
         self.refresh_invoice_number()
         self.cust_name.set("")
         self.cust_phone.set("")
         self.cust_email.set("")
-        self.payment.set("Cash")
 
         for child in self.items_tree.get_children():
             self.items_tree.delete(child)
@@ -471,8 +445,6 @@ class ReceiptApp:
         cust = self.cust_name.get().strip() or "Walk-in Customer"
         phone = self.cust_phone.get().strip()
         email = self.cust_email.get().strip()
-        payment = self.payment.get().strip()
-        receipt_type = self.receipt_type.get()
 
         items = []
         for child in self.items_tree.get_children():
@@ -498,7 +470,7 @@ class ReceiptApp:
             return
 
         html_content = self.build_html(
-            inv_no, date_str, cust, phone, email, payment, items, receipt_type
+            inv_no, date_str, cust, phone, email, items
         )
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -652,8 +624,15 @@ class ReceiptApp:
     .footer-text {{
         font-weight: 600;
     }}
-    .no-signature {{
+    .footer-policy {{
+        margin-top: 3px;
+    }}
+    .footer-terms {{
         margin-top: 2px;
+        color: #64748b;
+    }}
+    .no-signature {{
+        margin-top: 3px;
     }}
 </style>
 <div class="pdf-footer">
@@ -676,6 +655,12 @@ class ReceiptApp:
         return """
 <div class="footer-text">
     Thank you for choosing {{company_name}}. Warranty claims require original receipt.
+</div>
+<div class="footer-policy">
+    For our detailed warranty policy, visit https://chawlatech.pk/pages/warranty-policy
+</div>
+<div class="footer-terms">
+    By purchasing from Chawla Tech, you agree to our Terms of Service, Privacy Policy, &amp; Warranty Policy (available at chawlatech.pk).
 </div>
 <div class="no-signature">
     This is a computer-generated receipt and does not require a signature.
@@ -775,9 +760,7 @@ class ReceiptApp:
         return f"file:///{normalized}/"
 
     # ------------------- HTML construction -------------------
-    def build_html(self, inv_no, date_str, cust, phone, email, payment, items, receipt_type):
-        type_badge = "ONLINE ORDER" if receipt_type == "Online" else "IN-STORE SALE"
-
+    def build_html(self, inv_no, date_str, cust, phone, email, items):
         rows_html = ""
         for item in items:
             warranty_display = ""
@@ -825,15 +808,6 @@ class ReceiptApp:
         text-align: center;
         margin: 0 0 4px 0;
         letter-spacing: 0;
-    }}
-    .type-badge {{
-        text-align: center;
-        font-size: 9pt;
-        font-weight: bold;
-        color: #ffffff;
-        background-color: #0f172a;
-        padding: 4px 0;
-        margin-bottom: 12px;
     }}
     .meta-table {{
         width: 100%;
@@ -897,25 +871,52 @@ class ReceiptApp:
         font-weight: bold;
         font-size: 12pt;
     }}
-    .payment-line {{
-        margin-top: 12px;
-        text-align: right;
-        font-size: 10pt;
-        font-weight: bold;
-        break-inside: avoid;
-        page-break-inside: avoid;
-    }}
     .customer-box,
     .totals-table {{
         break-inside: avoid;
         page-break-inside: avoid;
+    }}
+    .policy-page {{
+        page-break-before: always;
+        break-before: page;
+    }}
+    .policy-title {{
+        font-size: 12pt;
+        font-weight: bold;
+        text-align: center;
+        margin: 0 0 10px 0;
+        color: #0f172a;
+    }}
+    .policy-columns {{
+        column-count: 2;
+        column-gap: 22px;
+    }}
+    .policy-section {{
+        break-inside: avoid;
+        page-break-inside: avoid;
+        margin: 0 0 9px 0;
+    }}
+    .policy-heading {{
+        font-size: 9pt;
+        font-weight: bold;
+        color: #0f172a;
+        margin: 0 0 3px 0;
+    }}
+    .policy-section ul {{
+        margin: 0;
+        padding-left: 14px;
+    }}
+    .policy-section li {{
+        font-size: 7.8pt;
+        line-height: 1.35;
+        margin-bottom: 2px;
+        color: #1f2937;
     }}
 </style>
 </head>
 <body>
 
 <div class="receipt-title">SALES RECEIPT</div>
-<div class="type-badge">{type_badge}</div>
 
 <table class="meta-table">
     <tr>
@@ -954,7 +955,7 @@ class ReceiptApp:
     </tr>
 </table>
 
-<div class="payment-line">Payment: {self.escape(payment)}</div>
+{self.warranty_policy_html()}
 
 </body>
 </html>"""
@@ -969,17 +970,98 @@ class ReceiptApp:
             .replace('"', "&quot;")
         )
 
+    @staticmethod
+    def warranty_policy_html():
+        # Second page printed on every receipt. Plain string (not an f-string),
+        # so literal braces are not an issue and ampersands are written as &amp;.
+        return """
+<div class="policy-page">
+    <div class="policy-title">🛡️ Chawla Tech — Warranty &amp; Returns Policy (Key Points)</div>
+    <div class="policy-columns">
+        <div class="policy-section">
+            <div class="policy-heading">📦 Returns &amp; Exchanges</div>
+            <ul>
+                <li><strong>Unopened / Sealed items:</strong> Returnable within 7 days for a full refund or exchange — original seal must be completely intact. Buyer pays return shipping.</li>
+                <li><strong>Once opened:</strong> Change-of-mind return is no longer valid, even if the item was never powered on.</li>
+                <li><strong>Opened / Used items with a defect:</strong> Eligible for return or replacement within 7 days, after in-store testing confirms the fault. Buyer pays return shipping.</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">📹 Video Proof Requirement (Important)</div>
+            <ul>
+                <li>For any return or exchange claim involving a wrong, defective, broken, missing, or faulty item (or any missing/faulty part), a video proof is mandatory.</li>
+                <li>The video must include the unboxing of the item from the moment the parcel/box is opened. Claims without this video proof will not be accepted.</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">🔧 What's Covered</div>
+            <ul>
+                <li>Manufacturing/material defects discovered under normal use within 7 days.</li>
+                <li>Some products have an extended manufacturer warranty (e.g., 6 months, 1 year) — check the product listing.</li>
+                <li>Chinese-imported/grey-market items: 7-day Chawla Tech warranty only — no brand warranty.</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">❌ What's NOT Covered (Warranty Void)</div>
+            <ul>
+                <li>Electrical damage from power surges, over-voltage, load-shedding, or wrong PSU</li>
+                <li>Physical damage (drops, broken pins, cracked screens, bent parts)</li>
+                <li>ESD (static electricity) damage</li>
+                <li>Liquid, fire, heat, or environmental damage</li>
+                <li>Damage from incorrect installation or incompatible parts</li>
+                <li>Unauthorized modifications, overclocking, or BIOS/firmware flashing</li>
+                <li>Pest damage (insects, lizards, rodents)</li>
+                <li>Tampered, removed, or defaced serial numbers/warranty seals</li>
+                <li>Continued use after a fault appeared</li>
+                <li>Software issues, data loss, viruses</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">🚫 No Returns At All (Ever)</div>
+            <ul>
+                <li>Digital products &amp; license keys — zero exceptions, no matter what</li>
+                <li>Opened hygiene items (earphones, screen protectors)</li>
+                <li>Clearance / As-Is items</li>
+                <li>Used single-use consumables (thermal paste, cleaning wipes, applied stickers/skins)</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">💸 Refunds</div>
+            <ul>
+                <li>Refunds go back to the original payment method only.</li>
+                <li>Cash refunds processed within 3 business days; online refunds within 5–7 business days.</li>
+                <li>No refunds to a different account without written authorization.</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">📋 To Make a Claim, You Need</div>
+            <ul>
+                <li>Proof of purchase (receipt, invoice, or registered mobile/email)</li>
+                <li>Video proof including unboxing (for wrong/defective/broken/missing/faulty items)</li>
+                <li>Item returned within the applicable window</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">📞 Contact</div>
+            <ul>
+                <li><strong>WhatsApp/Phone:</strong> +92 339 282 5523 (Mon–Thu &amp; Sat, 10am–8pm; Fri, 10am-12pm &amp; 3pm-8pm)</li>
+                <li><strong>Email:</strong> support@chawlatech.pk (reply within 24 hours)</li>
+                <li><strong>In-store:</strong> Karachi — bring the item and receipt</li>
+            </ul>
+        </div>
+    </div>
+</div>"""
+
 def run_smoke_test():
     app = ReceiptApp.__new__(ReceiptApp)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")
     html_content = app.build_html(
-        "INV-W0000",
+        "INV-0000",
         date.today().strftime(DATE_DISPLAY_FORMAT),
         "Smoke Test Customer",
         "000-000-0000",
         "smoke@example.com",
-        "Cash",
         [{
             "sku": "TEST",
             "desc": "Packaged executable smoke test item",
@@ -988,7 +1070,6 @@ def run_smoke_test():
             "price": 1.0,
             "warranty": "No Warranty",
         }],
-        "Online",
     )
     app.render_pdf(html_content, pdf_path)
 
