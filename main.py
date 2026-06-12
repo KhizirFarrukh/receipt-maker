@@ -20,9 +20,9 @@ APP_SETTINGS_FILE = os.path.join(APP_DIR, "appsettings.json")
 FILENAME_CONFIG_FILE = os.path.join(APP_DIR, "filename_config.json")
 OUTPUT_DIR = os.path.join(APP_DIR, "invoices")
 PDF_MARGIN_TOP = "150px"
-PDF_MARGIN_BOTTOM = "120px"
-PDF_MARGIN_LEFT = "40px"
-PDF_MARGIN_RIGHT = "40px"
+PDF_MARGIN_BOTTOM = "100px"
+PDF_MARGIN_LEFT = "24px"
+PDF_MARGIN_RIGHT = "24px"
 
 if getattr(sys, "frozen", False):
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(RESOURCE_DIR, "ms-playwright"))
