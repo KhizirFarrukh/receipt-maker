@@ -177,21 +177,23 @@ class ReceiptApp:
         ttk.Button(toolbar, text="- Remove Selected", command=self.remove_item).pack(side=tk.LEFT, padx=5)
 
         # Treeview for items
-        columns = ("sku", "desc", "serial", "qty", "price", "warranty")
+        columns = ("sku", "desc", "serial", "qty", "price", "discount", "warranty")
         self.items_tree = ttk.Treeview(items_frame, columns=columns, show="headings", height=10)
         self.items_tree.heading("sku", text="SKU")
         self.items_tree.heading("desc", text="Description")
         self.items_tree.heading("serial", text="Serial Number")
         self.items_tree.heading("qty", text="Qty")
         self.items_tree.heading("price", text="Unit Price (PKR)")
+        self.items_tree.heading("discount", text="Discount (PKR)")
         self.items_tree.heading("warranty", text="Warranty")
 
         self.items_tree.column("sku", width=80)
-        self.items_tree.column("desc", width=220)
-        self.items_tree.column("serial", width=130)
+        self.items_tree.column("desc", width=200)
+        self.items_tree.column("serial", width=120)
         self.items_tree.column("qty", width=50, anchor=tk.CENTER)
-        self.items_tree.column("price", width=110, anchor=tk.E)
-        self.items_tree.column("warranty", width=170)
+        self.items_tree.column("price", width=100, anchor=tk.E)
+        self.items_tree.column("discount", width=100, anchor=tk.E)
+        self.items_tree.column("warranty", width=160)
 
         self.items_tree.pack(fill=tk.BOTH, expand=True, pady=5)
 
@@ -370,10 +372,10 @@ class ReceiptApp:
     def add_item(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("New Item")
-        dialog.geometry("400x300")
+        dialog.geometry("400x340")
         dialog.resizable(False, False)
 
-        labels = ["SKU", "Description", "Serial No.", "Quantity", "Unit Price (PKR)", "Warranty"]
+        labels = ["SKU", "Description", "Serial No.", "Quantity", "Unit Price (PKR)", "Discount (PKR)", "Warranty"]
         vars_ = [tk.StringVar() for _ in labels]
         entries = []
 
@@ -401,7 +403,8 @@ class ReceiptApp:
             serial = vars_[2].get().strip()
             qty = vars_[3].get().strip()
             price = vars_[4].get().strip()
-            warranty = vars_[5].get().strip()
+            discount = vars_[5].get().strip()
+            warranty = vars_[6].get().strip()
 
             if not desc:
                 messagebox.showerror("Error", "Description is required.", parent=dialog)
@@ -409,11 +412,19 @@ class ReceiptApp:
             try:
                 qty_int = int(qty) if qty else 1
                 price_float = float(price) if price else 0.0
+                discount_float = float(discount) if discount else 0.0
             except ValueError:
-                messagebox.showerror("Error", "Qty and Price must be numbers.", parent=dialog)
+                messagebox.showerror("Error", "Qty, Price, and Discount must be numbers.", parent=dialog)
+                return
+            if discount_float < 0:
+                messagebox.showerror("Error", "Discount cannot be negative.", parent=dialog)
                 return
 
-            self.items_tree.insert("", tk.END, values=(sku, desc, serial, qty_int, f"{price_float:.2f}", warranty))
+            self.items_tree.insert(
+                "",
+                tk.END,
+                values=(sku, desc, serial, qty_int, f"{price_float:.2f}", f"{discount_float:.2f}", warranty),
+            )
             dialog.destroy()
 
         ttk.Button(dialog, text="Add", command=save).grid(row=len(labels), column=0, columnspan=2, pady=15)
@@ -449,10 +460,11 @@ class ReceiptApp:
         items = []
         for child in self.items_tree.get_children():
             vals = self.items_tree.item(child)["values"]
-            sku, desc, serial, qty, price, warranty = vals
+            sku, desc, serial, qty, price, discount, warranty = vals
             try:
                 qty_int = int(qty)
                 price_float = float(price)
+                discount_float = float(discount)
             except (ValueError, TypeError):
                 messagebox.showerror("Error", f"Invalid numbers in item: {desc}")
                 return
@@ -462,6 +474,7 @@ class ReceiptApp:
                 "serial": serial,
                 "qty": qty_int,
                 "price": price_float,
+                "discount": discount_float,
                 "warranty": warranty
             })
 
@@ -769,7 +782,9 @@ class ReceiptApp:
                     f'<br/><span class="item-warranty-text">'
                     f'{self.escape(item["warranty"])}</span>'
                 )
-            line_total = item["qty"] * item["price"]
+            discount = item.get("discount", 0.0)
+            line_total = item["qty"] * item["price"] - discount
+            discount_display = f"Rs. {discount:.2f}" if discount else "-"
             rows_html += f"""
                 <tr>
                     <td>{self.escape(item['sku']) or '-'}</td>
@@ -777,10 +792,25 @@ class ReceiptApp:
                     <td>{self.escape(item['serial']) or '-'}</td>
                     <td class="num">{item['qty']}</td>
                     <td class="num">Rs. {item['price']:.2f}</td>
+                    <td class="num">{discount_display}</td>
                     <td class="num">Rs. {line_total:.2f}</td>
                 </tr>"""
 
-        total = sum(i["qty"] * i["price"] for i in items)
+        subtotal = sum(i["qty"] * i["price"] for i in items)
+        total_discount = sum(i.get("discount", 0.0) for i in items)
+        total = subtotal - total_discount
+
+        totals_rows = ""
+        if total_discount:
+            totals_rows = f"""
+    <tr class="totals-sub">
+        <td>Subtotal</td>
+        <td align="right">Rs. {subtotal:,.2f}</td>
+    </tr>
+    <tr class="totals-sub">
+        <td>Total Discount</td>
+        <td align="right">- Rs. {total_discount:,.2f}</td>
+    </tr>"""
 
         return f"""<!DOCTYPE html>
 <html>
@@ -865,6 +895,13 @@ class ReceiptApp:
         font-size: 10pt;
     }}
     .totals-table td {{
+        padding: 3px 0;
+        font-size: 10pt;
+    }}
+    .totals-table tr.totals-sub td {{
+        color: #334155;
+    }}
+    .totals-table tr.totals-grand td {{
         padding: 6px 0;
         border-top: 2px solid #0f172a;
         border-bottom: 2px solid #0f172a;
@@ -940,6 +977,7 @@ class ReceiptApp:
             <th>Serial Number</th>
             <th>Qty</th>
             <th>Unit Price</th>
+            <th>Discount</th>
             <th>Amount</th>
         </tr>
     </thead>
@@ -948,8 +986,8 @@ class ReceiptApp:
     </tbody>
 </table>
 
-<table class="totals-table">
-    <tr>
+<table class="totals-table">{totals_rows}
+    <tr class="totals-grand">
         <td>TOTAL</td>
         <td align="right">Rs. {total:,.2f}</td>
     </tr>
@@ -1028,9 +1066,8 @@ class ReceiptApp:
         <div class="policy-section">
             <div class="policy-heading">💸 Refunds</div>
             <ul>
-                <li>Refunds go back to the original payment method only.</li>
-                <li>Cash refunds processed within 3 business days; online refunds within 5–7 business days.</li>
-                <li>No refunds to a different account without written authorization.</li>
+                <li>Cash refunds are processed physically; online refunds within 5–7 business days.</li>
+                <li>Items sold at a discount will be refunded the discounted price only.</li>
             </ul>
         </div>
         <div class="policy-section">
@@ -1066,8 +1103,9 @@ def run_smoke_test():
             "sku": "TEST",
             "desc": "Packaged executable smoke test item",
             "serial": "-",
-            "qty": 1,
+            "qty": 2,
             "price": 1.0,
+            "discount": 0.5,
             "warranty": "No Warranty",
         }],
     )
