@@ -27,10 +27,14 @@ PDF_MARGIN_RIGHT = "24px"
 if getattr(sys, "frozen", False):
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(RESOURCE_DIR, "ms-playwright"))
 
-# ------------------- invoice numbering config -------------------
-# All receipts share a single invoice series.
-INVOICE_PREFIX = "INV-"
-INVOICE_START_NUMBER = 1001  # first number for a fresh series, e.g. INV-1001
+# ------------------- receipt type / invoice numbering config -------------------
+# Each receipt type keeps its own invoice series via a single-letter prefix.
+RECEIPT_TYPES = {
+    "Online":   "W",   # web purchase
+    "In Store": "S",   # in-store purchase
+}
+INVOICE_PREFIX_BASE = "INV-"
+INVOICE_START_NUMBER = 1001  # first number for a fresh series, e.g. INV-W1001 / INV-S1001
 DATE_DISPLAY_FORMAT = "%d %b %Y"
 DATE_PARSE_FORMATS = (
     DATE_DISPLAY_FORMAT,
@@ -137,15 +141,27 @@ class ReceiptApp:
         main_frame = ttk.Frame(root, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # row 0: invoice no, date
-        ttk.Label(main_frame, text="Invoice No.").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-        self.inv_no = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.inv_no, width=18).grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        # row 0: receipt type, invoice no, date
+        ttk.Label(main_frame, text="Receipt Type").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        self.receipt_type = tk.StringVar(value="Online")
+        type_combo = ttk.Combobox(
+            main_frame,
+            textvariable=self.receipt_type,
+            values=list(RECEIPT_TYPES.keys()),
+            state="readonly",
+            width=12,
+        )
+        type_combo.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        type_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_invoice_number())
 
-        ttk.Label(main_frame, text="Date").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(main_frame, text="Invoice No.").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        self.inv_no = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=self.inv_no, width=18).grid(row=0, column=3, padx=5, pady=2, sticky=tk.W)
+
+        ttk.Label(main_frame, text="Date").grid(row=0, column=4, sticky=tk.W, padx=5, pady=2)
         self.date = tk.StringVar(value=date.today().strftime(DATE_DISPLAY_FORMAT))
         self.date_entry = ttk.Entry(main_frame, textvariable=self.date, width=15)
-        self.date_entry.grid(row=0, column=3, padx=5, pady=2, sticky=tk.W)
+        self.date_entry.grid(row=0, column=5, padx=5, pady=2, sticky=tk.W)
         self.date_entry.bind("<Button-1>", self.show_date_picker)
         self.date_entry.bind("<Down>", self.show_date_picker)
 
@@ -211,14 +227,20 @@ class ReceiptApp:
         self.refresh_invoice_number()
 
     # ------------------- invoice numbering -------------------
-    def get_next_invoice_number(self):
+    def get_invoice_prefix(self, type_label=None):
+        type_label = type_label or self.receipt_type.get()
+        return f"{INVOICE_PREFIX_BASE}{RECEIPT_TYPES[type_label]}"
+
+    def get_next_invoice_number(self, prefix):
         if not os.path.exists(OUTPUT_DIR):
             os.makedirs(OUTPUT_DIR)
         max_num = INVOICE_START_NUMBER - 1
-        # Matches the current INV-<number> series as well as any legacy
-        # INV-W<number> / INV-S<number> files, so numbering never collides.
+        letter = prefix[len(INVOICE_PREFIX_BASE):]
+        # Count this type's own files (e.g. INV-W####) plus any legacy
+        # unlettered INV-#### files, so a series never numbers below an
+        # invoice that already exists.
         pattern = re.compile(
-            rf"^{re.escape(INVOICE_PREFIX)}[A-Za-z]?(\d+)(?:-.*)?\.pdf$",
+            rf"^{re.escape(INVOICE_PREFIX_BASE)}{re.escape(letter)}?(\d+)(?:-.*)?\.pdf$",
             re.IGNORECASE,
         )
         for fname in os.listdir(OUTPUT_DIR):
@@ -230,8 +252,9 @@ class ReceiptApp:
         return max_num + 1
 
     def refresh_invoice_number(self):
-        next_num = self.get_next_invoice_number()
-        self.inv_no.set(f"{INVOICE_PREFIX}{next_num}")
+        prefix = self.get_invoice_prefix()
+        next_num = self.get_next_invoice_number(prefix)
+        self.inv_no.set(f"{prefix}{next_num}")
 
     # ------------------- date picker -------------------
     def parse_selected_date(self):
@@ -436,6 +459,7 @@ class ReceiptApp:
 
     def clear_form(self):
         self.close_date_picker()
+        self.receipt_type.set("Online")
         self.refresh_invoice_number()
         self.cust_name.set("")
         self.cust_phone.set("")
@@ -456,6 +480,7 @@ class ReceiptApp:
         cust = self.cust_name.get().strip() or "Walk-in Customer"
         phone = self.cust_phone.get().strip()
         email = self.cust_email.get().strip()
+        receipt_type = self.receipt_type.get()
 
         items = []
         for child in self.items_tree.get_children():
@@ -483,7 +508,7 @@ class ReceiptApp:
             return
 
         html_content = self.build_html(
-            inv_no, date_str, cust, phone, email, items
+            inv_no, date_str, cust, phone, email, items, receipt_type
         )
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -773,7 +798,8 @@ class ReceiptApp:
         return f"file:///{normalized}/"
 
     # ------------------- HTML construction -------------------
-    def build_html(self, inv_no, date_str, cust, phone, email, items):
+    def build_html(self, inv_no, date_str, cust, phone, email, items, receipt_type="Online"):
+        type_badge = "ONLINE ORDER" if receipt_type == "Online" else "IN-STORE SALE"
         rows_html = ""
         for item in items:
             warranty_display = ""
@@ -838,6 +864,15 @@ class ReceiptApp:
         text-align: center;
         margin: 0 0 4px 0;
         letter-spacing: 0;
+    }}
+    .type-badge {{
+        text-align: center;
+        font-size: 9pt;
+        font-weight: bold;
+        color: #ffffff;
+        background-color: #0f172a;
+        padding: 4px 0;
+        margin-bottom: 12px;
     }}
     .meta-table {{
         width: 100%;
@@ -954,6 +989,7 @@ class ReceiptApp:
 <body>
 
 <div class="receipt-title">SALES RECEIPT</div>
+<div class="type-badge">{type_badge}</div>
 
 <table class="meta-table">
     <tr>
@@ -1094,7 +1130,7 @@ def run_smoke_test():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")
     html_content = app.build_html(
-        "INV-0000",
+        "INV-W0000",
         date.today().strftime(DATE_DISPLAY_FORMAT),
         "Smoke Test Customer",
         "000-000-0000",
@@ -1108,6 +1144,7 @@ def run_smoke_test():
             "discount": 0.5,
             "warranty": "No Warranty",
         }],
+        "Online",
     )
     app.render_pdf(html_content, pdf_path)
 
