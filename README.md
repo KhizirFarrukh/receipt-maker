@@ -5,7 +5,8 @@ A Python tkinter desktop app for generating A4 PDF sales receipts.
 ## Features
 
 - Separate invoice number series for online (`INV-W####`) and in-store (`INV-S####`) purchases. The number is editable and defaults to one above the highest previously generated invoice in that series.
-- Customer, item, serial number, quantity, price, and warranty fields.
+- Customer, item, serial number, quantity, price, per-line discount, per-line tax, and warranty fields, plus a global shipping fee.
+- Receipt totals show a Subtotal / Taxes / Discounts / Shipping / Total breakdown; taxes, discounts, and shipping rows (and the Discount/Tax columns) appear only when used.
 - Auto-incrementing receipt numbers saved under `invoices/`.
 - Configurable PDF filenames through `filename_config.json`.
 - Configurable business/header details through `appsettings.json`.

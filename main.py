@@ -174,10 +174,14 @@ class ReceiptApp:
         self.cust_phone = tk.StringVar()
         ttk.Entry(main_frame, textvariable=self.cust_phone, width=15).grid(row=1, column=4, padx=5, pady=2)
 
-        # row 2: email
+        # row 2: email + shipping fees (global)
         ttk.Label(main_frame, text="Email").grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
         self.cust_email = tk.StringVar()
         ttk.Entry(main_frame, textvariable=self.cust_email, width=30).grid(row=2, column=1, columnspan=2, padx=5, pady=2)
+
+        ttk.Label(main_frame, text="Shipping (PKR)").grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
+        self.shipping = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=self.shipping, width=15).grid(row=2, column=4, padx=5, pady=2, sticky=tk.W)
 
         # --- items frame ---
         items_frame = ttk.LabelFrame(main_frame, text="Items", padding=5)
@@ -193,7 +197,7 @@ class ReceiptApp:
         ttk.Button(toolbar, text="- Remove Selected", command=self.remove_item).pack(side=tk.LEFT, padx=5)
 
         # Treeview for items
-        columns = ("sku", "desc", "serial", "qty", "price", "discount", "warranty")
+        columns = ("sku", "desc", "serial", "qty", "price", "discount", "tax", "warranty")
         self.items_tree = ttk.Treeview(items_frame, columns=columns, show="headings", height=10)
         self.items_tree.heading("sku", text="SKU")
         self.items_tree.heading("desc", text="Description")
@@ -201,15 +205,17 @@ class ReceiptApp:
         self.items_tree.heading("qty", text="Qty")
         self.items_tree.heading("price", text="Unit Price (PKR)")
         self.items_tree.heading("discount", text="Discount (PKR)")
+        self.items_tree.heading("tax", text="Tax (PKR)")
         self.items_tree.heading("warranty", text="Warranty")
 
-        self.items_tree.column("sku", width=80)
-        self.items_tree.column("desc", width=200)
-        self.items_tree.column("serial", width=120)
-        self.items_tree.column("qty", width=50, anchor=tk.CENTER)
-        self.items_tree.column("price", width=100, anchor=tk.E)
-        self.items_tree.column("discount", width=100, anchor=tk.E)
-        self.items_tree.column("warranty", width=160)
+        self.items_tree.column("sku", width=70)
+        self.items_tree.column("desc", width=190)
+        self.items_tree.column("serial", width=110)
+        self.items_tree.column("qty", width=45, anchor=tk.CENTER)
+        self.items_tree.column("price", width=90, anchor=tk.E)
+        self.items_tree.column("discount", width=90, anchor=tk.E)
+        self.items_tree.column("tax", width=90, anchor=tk.E)
+        self.items_tree.column("warranty", width=150)
 
         self.items_tree.pack(fill=tk.BOTH, expand=True, pady=5)
 
@@ -236,11 +242,14 @@ class ReceiptApp:
             os.makedirs(OUTPUT_DIR)
         max_num = INVOICE_START_NUMBER - 1
         letter = prefix[len(INVOICE_PREFIX_BASE):]
-        # Count this type's own files (e.g. INV-W####) plus any legacy
-        # unlettered INV-#### files, so a series never numbers below an
-        # invoice that already exists.
+        # The online series also counts legacy unlettered INV-#### files
+        # (those belong to online); the in-store series counts only its own.
+        if letter.upper() == RECEIPT_TYPES["Online"]:
+            letter_pattern = f"{re.escape(letter)}?"
+        else:
+            letter_pattern = re.escape(letter)
         pattern = re.compile(
-            rf"^{re.escape(INVOICE_PREFIX_BASE)}{re.escape(letter)}?(\d+)(?:-.*)?\.pdf$",
+            rf"^{re.escape(INVOICE_PREFIX_BASE)}{letter_pattern}(\d+)(?:-.*)?\.pdf$",
             re.IGNORECASE,
         )
         for fname in os.listdir(OUTPUT_DIR):
@@ -395,30 +404,39 @@ class ReceiptApp:
     def add_item(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("New Item")
-        dialog.geometry("400x340")
+        dialog.geometry("400x430")
         dialog.resizable(False, False)
 
-        labels = ["SKU", "Description", "Serial No.", "Quantity", "Unit Price (PKR)", "Discount (PKR)", "Warranty"]
+        labels = ["SKU", "Description", "Serial No.", "Quantity", "Unit Price (PKR)", "Discount (PKR)", "Tax (PKR)"]
         vars_ = [tk.StringVar() for _ in labels]
-        entries = []
 
         for i, (label, var) in enumerate(zip(labels, vars_)):
             ttk.Label(dialog, text=label).grid(row=i, column=0, padx=10, pady=5, sticky=tk.W)
-            if label == "Warranty":
-                combo = ttk.Combobox(dialog, textvariable=var, values=[
-                    "12 Months Limited Warranty",
-                    "6 Months Limited Warranty",
-                    "3 Months Limited Warranty",
-                    "7 Days Checking Warranty",
-                    "No Warranty"
-                ])
-                combo.grid(row=i, column=1, padx=10, pady=5)
-                combo.current(0)
-                entries.append(combo)
-            else:
-                entry = ttk.Entry(dialog, textvariable=var)
-                entry.grid(row=i, column=1, padx=10, pady=5)
-                entries.append(entry)
+            ttk.Entry(dialog, textvariable=var).grid(row=i, column=1, padx=10, pady=5)
+
+        # warranty: a type, plus a months count used only for "Months"
+        warranty_row = len(labels)
+        ttk.Label(dialog, text="Warranty").grid(row=warranty_row, column=0, padx=10, pady=5, sticky=tk.W)
+        warranty_type = tk.StringVar(value="Months")
+        warranty_combo = ttk.Combobox(
+            dialog,
+            textvariable=warranty_type,
+            values=["Months", "7 Days Checking", "No Warranty"],
+            state="readonly",
+            width=16,
+        )
+        warranty_combo.grid(row=warranty_row, column=1, padx=10, pady=5, sticky=tk.W)
+
+        months_row = warranty_row + 1
+        ttk.Label(dialog, text="Warranty Months").grid(row=months_row, column=0, padx=10, pady=5, sticky=tk.W)
+        warranty_months = tk.StringVar(value="12")
+        months_entry = ttk.Entry(dialog, textvariable=warranty_months, width=10)
+        months_entry.grid(row=months_row, column=1, padx=10, pady=5, sticky=tk.W)
+
+        def on_warranty_type_change(event=None):
+            months_entry.configure(state="normal" if warranty_type.get() == "Months" else "disabled")
+
+        warranty_combo.bind("<<ComboboxSelected>>", on_warranty_type_change)
 
         def save():
             sku = vars_[0].get().strip()
@@ -427,7 +445,7 @@ class ReceiptApp:
             qty = vars_[3].get().strip()
             price = vars_[4].get().strip()
             discount = vars_[5].get().strip()
-            warranty = vars_[6].get().strip()
+            tax = vars_[6].get().strip()
 
             if not desc:
                 messagebox.showerror("Error", "Description is required.", parent=dialog)
@@ -436,21 +454,47 @@ class ReceiptApp:
                 qty_int = int(qty) if qty else 1
                 price_float = float(price) if price else 0.0
                 discount_float = float(discount) if discount else 0.0
+                tax_float = float(tax) if tax else 0.0
             except ValueError:
-                messagebox.showerror("Error", "Qty, Price, and Discount must be numbers.", parent=dialog)
+                messagebox.showerror("Error", "Qty, Price, Discount, and Tax must be numbers.", parent=dialog)
                 return
-            if discount_float < 0:
-                messagebox.showerror("Error", "Discount cannot be negative.", parent=dialog)
+            if discount_float < 0 or tax_float < 0:
+                messagebox.showerror("Error", "Discount and Tax cannot be negative.", parent=dialog)
+                return
+
+            warranty = self.build_warranty_text(warranty_type.get(), warranty_months.get().strip(), dialog)
+            if warranty is None:
                 return
 
             self.items_tree.insert(
                 "",
                 tk.END,
-                values=(sku, desc, serial, qty_int, f"{price_float:.2f}", f"{discount_float:.2f}", warranty),
+                values=(sku, desc, serial, qty_int, f"{price_float:.2f}", f"{discount_float:.2f}", f"{tax_float:.2f}", warranty),
             )
             dialog.destroy()
 
-        ttk.Button(dialog, text="Add", command=save).grid(row=len(labels), column=0, columnspan=2, pady=15)
+        ttk.Button(dialog, text="Add", command=save).grid(row=months_row + 1, column=0, columnspan=2, pady=15)
+
+    @staticmethod
+    def build_warranty_text(warranty_type, months_raw, parent=None):
+        """Return the warranty label string, or None if validation failed."""
+        if warranty_type == "7 Days Checking":
+            return "7 Days Checking Warranty"
+        if warranty_type == "No Warranty":
+            return "No Warranty"
+
+        # "Months": require a positive whole number.
+        try:
+            months = int(months_raw)
+        except ValueError:
+            messagebox.showerror("Error", "Warranty months must be a positive whole number.", parent=parent)
+            return None
+        if months <= 0:
+            messagebox.showerror("Error", "Warranty months must be a positive whole number.", parent=parent)
+            return None
+
+        unit = "Month" if months == 1 else "Months"
+        return f"{months} {unit} Limited Warranty"
 
     def remove_item(self):
         selected = self.items_tree.selection()
@@ -464,6 +508,7 @@ class ReceiptApp:
         self.cust_name.set("")
         self.cust_phone.set("")
         self.cust_email.set("")
+        self.shipping.set("")
 
         for child in self.items_tree.get_children():
             self.items_tree.delete(child)
@@ -482,14 +527,25 @@ class ReceiptApp:
         email = self.cust_email.get().strip()
         receipt_type = self.receipt_type.get()
 
+        shipping_raw = self.shipping.get().strip()
+        try:
+            shipping_float = float(shipping_raw) if shipping_raw else 0.0
+        except ValueError:
+            messagebox.showerror("Error", "Shipping must be a number.")
+            return
+        if shipping_float < 0:
+            messagebox.showerror("Error", "Shipping cannot be negative.")
+            return
+
         items = []
         for child in self.items_tree.get_children():
             vals = self.items_tree.item(child)["values"]
-            sku, desc, serial, qty, price, discount, warranty = vals
+            sku, desc, serial, qty, price, discount, tax, warranty = vals
             try:
                 qty_int = int(qty)
                 price_float = float(price)
                 discount_float = float(discount)
+                tax_float = float(tax)
             except (ValueError, TypeError):
                 messagebox.showerror("Error", f"Invalid numbers in item: {desc}")
                 return
@@ -500,6 +556,7 @@ class ReceiptApp:
                 "qty": qty_int,
                 "price": price_float,
                 "discount": discount_float,
+                "tax": tax_float,
                 "warranty": warranty
             })
 
@@ -508,7 +565,7 @@ class ReceiptApp:
             return
 
         html_content = self.build_html(
-            inv_no, date_str, cust, phone, email, items, receipt_type
+            inv_no, date_str, cust, phone, email, items, receipt_type, shipping_float
         )
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -798,8 +855,23 @@ class ReceiptApp:
         return f"file:///{normalized}/"
 
     # ------------------- HTML construction -------------------
-    def build_html(self, inv_no, date_str, cust, phone, email, items, receipt_type="Online"):
+    def build_html(self, inv_no, date_str, cust, phone, email, items, receipt_type="Online", shipping=0.0):
         type_badge = "ONLINE ORDER" if receipt_type == "Online" else "IN-STORE SALE"
+
+        # Optional columns appear only when at least one line item uses them.
+        show_discount = any(i.get("discount", 0.0) for i in items)
+        show_tax = any(i.get("tax", 0.0) for i in items)
+
+        header_cells = (
+            "<th>SKU</th><th>Item Description</th><th>Serial Number</th>"
+            "<th>Qty</th><th>Unit Price</th>"
+        )
+        if show_discount:
+            header_cells += "<th>Discount</th>"
+        if show_tax:
+            header_cells += "<th>Tax</th>"
+        header_cells += "<th>Amount</th>"
+
         rows_html = ""
         for item in items:
             warranty_display = ""
@@ -809,34 +881,50 @@ class ReceiptApp:
                     f'{self.escape(item["warranty"])}</span>'
                 )
             discount = item.get("discount", 0.0)
-            line_total = item["qty"] * item["price"] - discount
-            discount_display = f"Rs. {discount:.2f}" if discount else "-"
-            rows_html += f"""
-                <tr>
-                    <td>{self.escape(item['sku']) or '-'}</td>
-                    <td>{self.escape(item['desc'])}{warranty_display}</td>
-                    <td>{self.escape(item['serial']) or '-'}</td>
-                    <td class="num">{item['qty']}</td>
-                    <td class="num">Rs. {item['price']:.2f}</td>
-                    <td class="num">{discount_display}</td>
-                    <td class="num">Rs. {line_total:.2f}</td>
-                </tr>"""
+            tax = item.get("tax", 0.0)
+            amount = item["qty"] * item["price"]
+            cells = (
+                f"<td>{self.escape(item['sku']) or '-'}</td>"
+                f"<td>{self.escape(item['desc'])}{warranty_display}</td>"
+                f"<td>{self.escape(item['serial']) or '-'}</td>"
+                f'<td class="num">{item["qty"]}</td>'
+                f'<td class="num">Rs. {item["price"]:.2f}</td>'
+            )
+            if show_discount:
+                cells += f'<td class="num">{("Rs. %.2f" % discount) if discount else "-"}</td>'
+            if show_tax:
+                cells += f'<td class="num">{("Rs. %.2f" % tax) if tax else "-"}</td>'
+            cells += f'<td class="num">Rs. {amount:.2f}</td>'
+            rows_html += f"<tr>{cells}</tr>"
 
         subtotal = sum(i["qty"] * i["price"] for i in items)
         total_discount = sum(i.get("discount", 0.0) for i in items)
-        total = subtotal - total_discount
+        total_tax = sum(i.get("tax", 0.0) for i in items)
+        total = subtotal + total_tax - total_discount + shipping
 
+        # Break out the subtotal/components only when there is something besides
+        # the line items to show; otherwise just show TOTAL.
         totals_rows = ""
-        if total_discount:
-            totals_rows = f"""
-    <tr class="totals-sub">
-        <td>Subtotal</td>
-        <td align="right">Rs. {subtotal:,.2f}</td>
-    </tr>
-    <tr class="totals-sub">
-        <td>Total Discount</td>
-        <td align="right">- Rs. {total_discount:,.2f}</td>
-    </tr>"""
+        if total_tax or total_discount or shipping:
+            totals_rows += (
+                f'<tr class="totals-sub"><td>Subtotal</td>'
+                f'<td align="right">Rs. {subtotal:,.2f}</td></tr>'
+            )
+            if total_tax:
+                totals_rows += (
+                    f'<tr class="totals-sub"><td>Taxes</td>'
+                    f'<td align="right">Rs. {total_tax:,.2f}</td></tr>'
+                )
+            if total_discount:
+                totals_rows += (
+                    f'<tr class="totals-sub"><td>Discounts</td>'
+                    f'<td align="right">- Rs. {total_discount:,.2f}</td></tr>'
+                )
+            if shipping:
+                totals_rows += (
+                    f'<tr class="totals-sub"><td>Shipping Fees</td>'
+                    f'<td align="right">Rs. {shipping:,.2f}</td></tr>'
+                )
 
         return f"""<!DOCTYPE html>
 <html>
@@ -1007,15 +1095,7 @@ class ReceiptApp:
 
 <table class="items">
     <thead>
-        <tr>
-            <th>SKU</th>
-            <th>Item Description</th>
-            <th>Serial Number</th>
-            <th>Qty</th>
-            <th>Unit Price</th>
-            <th>Discount</th>
-            <th>Amount</th>
-        </tr>
+        <tr>{header_cells}</tr>
     </thead>
     <tbody>
         {rows_html}
@@ -1142,9 +1222,11 @@ def run_smoke_test():
             "qty": 2,
             "price": 1.0,
             "discount": 0.5,
+            "tax": 0.2,
             "warranty": "No Warranty",
         }],
         "Online",
+        1.0,
     )
     app.render_pdf(html_content, pdf_path)
 
