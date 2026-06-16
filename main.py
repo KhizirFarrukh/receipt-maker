@@ -134,8 +134,8 @@ class ReceiptApp:
         self.root = root
         company = load_app_settings()["company"]
         root.title(f"{company['name']} - Receipt Generator")
-        root.geometry("980x720")
         root.resizable(True, True)
+        self._apply_scaling(root)
 
         # --- form fields ---
         main_frame = ttk.Frame(root, padding=10)
@@ -194,11 +194,18 @@ class ReceiptApp:
         toolbar = ttk.Frame(items_frame)
         toolbar.pack(fill=tk.X, pady=2)
         ttk.Button(toolbar, text="+ Add Item", command=self.add_item).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="Edit Selected", command=self.edit_item).pack(side=tk.LEFT, padx=5)
         ttk.Button(toolbar, text="- Remove Selected", command=self.remove_item).pack(side=tk.LEFT, padx=5)
 
-        # Treeview for items
+        # Treeview for items (single selection: edit/remove act on one row).
+        # Wrapped with scrollbars so it stays usable on small windows.
+        tree_wrap = ttk.Frame(items_frame)
+        tree_wrap.pack(fill=tk.BOTH, expand=True, pady=5)
+        tree_wrap.rowconfigure(0, weight=1)
+        tree_wrap.columnconfigure(0, weight=1)
+
         columns = ("sku", "desc", "serial", "qty", "price", "discount", "tax", "warranty")
-        self.items_tree = ttk.Treeview(items_frame, columns=columns, show="headings", height=10)
+        self.items_tree = ttk.Treeview(tree_wrap, columns=columns, show="headings", height=6, selectmode="browse")
         self.items_tree.heading("sku", text="SKU")
         self.items_tree.heading("desc", text="Description")
         self.items_tree.heading("serial", text="Serial Number")
@@ -217,7 +224,13 @@ class ReceiptApp:
         self.items_tree.column("tax", width=90, anchor=tk.E)
         self.items_tree.column("warranty", width=150)
 
-        self.items_tree.pack(fill=tk.BOTH, expand=True, pady=5)
+        vsb = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.items_tree.yview)
+        hsb = ttk.Scrollbar(tree_wrap, orient="horizontal", command=self.items_tree.xview)
+        self.items_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.items_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        vsb.grid(row=0, column=1, sticky=tk.NS)
+        hsb.grid(row=1, column=0, sticky=tk.EW)
+        self.items_tree.bind("<Double-1>", self.on_item_double_click)
 
         # --- action buttons ---
         actions_frame = ttk.Frame(main_frame)
@@ -231,6 +244,57 @@ class ReceiptApp:
 
         # populate the initial invoice number once everything is wired
         self.refresh_invoice_number()
+
+        # size the window to fit its contents, clamped to the screen so the
+        # action buttons are always visible (even at 1024x768)
+        self._size_window(root, main_frame)
+
+    # ------------------- scaling / window sizing -------------------
+    @staticmethod
+    def enable_dpi_awareness():
+        """Tell Windows we scale ourselves, so high-DPI displays stay crisp.
+        Must run before the Tk root is created."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)  # system DPI aware
+            except Exception:
+                ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+    def _apply_scaling(self, root):
+        # Scale fonts/widgets to the monitor DPI (96 dpi = 1.0). On high-DPI
+        # screens this makes text and controls the right physical size.
+        try:
+            dpi = root.winfo_fpixels("1i")
+        except Exception:
+            dpi = 96.0
+        self.ui_scale = max(dpi / 96.0, 1.0)
+        try:
+            root.tk.call("tk", "scaling", dpi / 72.0)
+        except Exception:
+            pass
+
+    def _size_window(self, root, content):
+        root.update_idletasks()
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        req_w = content.winfo_reqwidth()
+        req_h = content.winfo_reqheight()
+        # Never let the window be smaller than what shows every row (which
+        # includes the action buttons), nor larger than the screen.
+        min_w = min(req_w, screen_w - 20)
+        min_h = min(req_h, screen_h - 80)  # leave room for the taskbar
+        root.minsize(min_w, min_h)
+        # Open a little roomier than the minimum, clamped to the screen.
+        open_w = min(max(req_w, int(980 * self.ui_scale)), screen_w - 20)
+        open_h = min(max(req_h, int(720 * self.ui_scale)), screen_h - 80)
+        x = max(0, (screen_w - open_w) // 2)
+        y = max(0, (screen_h - open_h) // 2 - 20)
+        root.geometry(f"{open_w}x{open_h}+{x}+{y}")
 
     # ------------------- invoice numbering -------------------
     def get_invoice_prefix(self, type_label=None):
@@ -402,10 +466,26 @@ class ReceiptApp:
 
     # ------------------- item management -------------------
     def add_item(self):
+        self.open_item_dialog()
+
+    def edit_item(self):
+        selected = self.items_tree.selection()
+        if not selected:
+            messagebox.showinfo("Edit Item", "Select an item to edit first.")
+            return
+        self.open_item_dialog(selected[0])
+
+    def on_item_double_click(self, event):
+        if self.items_tree.identify_row(event.y):
+            self.edit_item()
+
+    def open_item_dialog(self, item_id=None):
+        editing = item_id is not None
         dialog = tk.Toplevel(self.root)
-        dialog.title("New Item")
+        dialog.title("Edit Item" if editing else "New Item")
         dialog.geometry("400x430")
         dialog.resizable(False, False)
+        dialog.transient(self.root)  # stay tied to and above the main window
 
         labels = ["SKU", "Description", "Serial No.", "Quantity", "Unit Price (PKR)", "Discount (PKR)", "Tax (PKR)"]
         vars_ = [tk.StringVar() for _ in labels]
@@ -438,6 +518,18 @@ class ReceiptApp:
 
         warranty_combo.bind("<<ComboboxSelected>>", on_warranty_type_change)
 
+        # pre-fill the fields when editing an existing row
+        if editing:
+            current = self.items_tree.item(item_id)["values"]
+            sku0, desc0, serial0, qty0, price0, discount0, tax0, warranty0 = current
+            for var, value in zip(vars_, (sku0, desc0, serial0, qty0, price0, discount0, tax0)):
+                var.set("" if value is None else str(value))
+            wtype, wmonths = self.parse_warranty_text(str(warranty0))
+            warranty_type.set(wtype)
+            if wmonths:
+                warranty_months.set(wmonths)
+        on_warranty_type_change()
+
         def save():
             sku = vars_[0].get().strip()
             desc = vars_[1].get().strip()
@@ -466,14 +558,31 @@ class ReceiptApp:
             if warranty is None:
                 return
 
-            self.items_tree.insert(
-                "",
-                tk.END,
-                values=(sku, desc, serial, qty_int, f"{price_float:.2f}", f"{discount_float:.2f}", f"{tax_float:.2f}", warranty),
+            row_values = (
+                sku, desc, serial, qty_int,
+                f"{price_float:.2f}", f"{discount_float:.2f}", f"{tax_float:.2f}", warranty,
             )
+            if editing:
+                self.items_tree.item(item_id, values=row_values)
+            else:
+                self.items_tree.insert("", tk.END, values=row_values)
             dialog.destroy()
 
-        ttk.Button(dialog, text="Add", command=save).grid(row=months_row + 1, column=0, columnspan=2, pady=15)
+        button_frame = ttk.Frame(dialog)
+        button_frame.grid(row=months_row + 1, column=0, columnspan=2, pady=15)
+        ttk.Button(button_frame, text="Save" if editing else "Add", command=save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+        # make the dialog modal: centre it over the main window, take the input
+        # grab so the main window can't be used until this dialog is closed.
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dialog.winfo_width()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog.winfo_height()) // 2)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.grab_set()
+        dialog.focus_set()
+        self.root.wait_window(dialog)
 
     @staticmethod
     def build_warranty_text(warranty_type, months_raw, parent=None):
@@ -495,6 +604,17 @@ class ReceiptApp:
 
         unit = "Month" if months == 1 else "Months"
         return f"{months} {unit} Limited Warranty"
+
+    @staticmethod
+    def parse_warranty_text(warranty):
+        """Reverse of build_warranty_text: -> (warranty_type, months_str)."""
+        text = (warranty or "").strip()
+        if "7 Days Checking" in text:
+            return ("7 Days Checking", "")
+        match = re.match(r"^(\d+)\s+Months?\b", text)
+        if match:
+            return ("Months", match.group(1))
+        return ("No Warranty", "")
 
     def remove_item(self):
         selected = self.items_tree.selection()
@@ -569,7 +689,21 @@ class ReceiptApp:
         )
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        pdf_path = os.path.join(OUTPUT_DIR, self.build_pdf_filename(inv_no, date_str, cust, email, phone))
+        base_filename = self.build_pdf_filename(inv_no, date_str, cust, email, phone)
+        pdf_path = os.path.join(OUTPUT_DIR, base_filename)
+        if os.path.exists(pdf_path):
+            answer = messagebox.askyesnocancel(
+                "File Already Exists",
+                f"{base_filename} already exists.\n\n"
+                "Yes  -  Replace the existing file\n"
+                "No  -  Save as a new copy (-1, -2, ...)\n"
+                "Cancel  -  Don't save",
+            )
+            if answer is None:
+                self.status_label.config(text="Save cancelled")
+                return
+            if not answer:  # No -> keep the existing file, save a numbered copy
+                pdf_path = self.next_available_pdf_path(base_filename)
 
         try:
             self.render_pdf(html_content, pdf_path)
@@ -638,6 +772,18 @@ class ReceiptApp:
                 filename_parts.append(clean_value)
 
         return "-".join(filename_parts) + ".pdf"
+
+    @staticmethod
+    def next_available_pdf_path(base_filename):
+        """Return a path for base_filename with the smallest free -N suffix
+        (e.g. INV-W1001.pdf -> INV-W1001-1.pdf -> INV-W1001-2.pdf)."""
+        stem, ext = os.path.splitext(base_filename)
+        n = 1
+        while True:
+            candidate = os.path.join(OUTPUT_DIR, f"{stem}-{n}{ext}")
+            if not os.path.exists(candidate):
+                return candidate
+            n += 1
 
     def sanitize_filename_part(self, value):
         clean_value = str(value).strip()
@@ -1235,6 +1381,7 @@ if __name__ == "__main__":
     if "--smoke-test" in sys.argv:
         run_smoke_test()
     else:
+        ReceiptApp.enable_dpi_awareness()
         root = tk.Tk()
         app = ReceiptApp(root)
         root.mainloop()
