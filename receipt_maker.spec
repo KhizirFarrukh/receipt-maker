@@ -8,6 +8,19 @@ from PyInstaller.utils.hooks import collect_all
 
 playwright_datas, playwright_binaries, playwright_hiddenimports = collect_all("playwright")
 
+# pyHanko (PAdES signing/verification) + its crypto stack pull in data files,
+# native extensions and dynamically-referenced submodules that PyInstaller does
+# not discover on its own. collect_all grabs each package wholesale.
+signing_datas = []
+signing_binaries = []
+signing_hiddenimports = ["receipt_signing"]
+for _pkg in ("pyhanko", "pyhanko_certvalidator", "asn1crypto", "oscrypto",
+             "cryptography", "certifi", "tzlocal", "uritools"):
+    _d, _b, _h = collect_all(_pkg)
+    signing_datas += _d
+    signing_binaries += _b
+    signing_hiddenimports += _h
+
 if sys.platform == "win32":
     playwright_browser_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
 elif sys.platform == "darwin":
@@ -24,15 +37,15 @@ datas = [
     ("header.html", "."),
     ("footer.html", "."),
     (playwright_browser_dir, "ms-playwright"),
-] + playwright_datas
+] + playwright_datas + signing_datas
 
 
 a = Analysis(
     ["main.py"],
     pathex=[],
-    binaries=playwright_binaries,
+    binaries=playwright_binaries + signing_binaries,
     datas=datas,
-    hiddenimports=playwright_hiddenimports,
+    hiddenimports=playwright_hiddenimports + signing_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

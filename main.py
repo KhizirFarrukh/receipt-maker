@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import base64
 import calendar
 from datetime import date, datetime
@@ -9,6 +9,8 @@ import os
 import re
 import sys
 import html as html_utils
+
+import receipt_signing
 
 # ------------------- file paths -------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -52,7 +54,20 @@ DEFAULT_APP_SETTINGS = {
         "phone": "000-000-0000",
         "email": "hello@example.com",
         "logo_path": "logo.png",
-    }
+    },
+    # Digital-signature settings. When enabled, every generated receipt is signed
+    # with a PAdES signature using the private key created by keygen.py, so a
+    # forged or edited receipt fails verification against the public certificate.
+    "signing": {
+        "enabled": True,
+        "private_key_path": "signing/private_key.pem",
+        "certificate_path": "signing/certificate.pem",
+        "key_passphrase": "",
+        "signer_name": "Chawla Tech",
+        "reason": "Receipt authenticity",
+        "location": "chawlatech.pk",
+        "tsa_url": "",
+    },
 }
 
 # ------------------- read HTML snippets -------------------
@@ -74,17 +89,31 @@ def load_app_settings():
         return default_app_settings()
 
     settings = default_app_settings()
-    company_config = config.get("company", {}) if isinstance(config, dict) else {}
+    if not isinstance(config, dict):
+        return settings
+
+    company_config = config.get("company", {})
     if isinstance(company_config, dict):
         for key in settings["company"]:
             value = company_config.get(key)
             if isinstance(value, str):
                 settings["company"][key] = value.strip()
+
+    signing_config = config.get("signing", {})
+    if isinstance(signing_config, dict):
+        for key, default_value in settings["signing"].items():
+            value = signing_config.get(key)
+            if isinstance(default_value, bool):
+                if isinstance(value, bool):
+                    settings["signing"][key] = value
+            elif isinstance(value, str):
+                settings["signing"][key] = value.strip()
     return settings
 
 def default_app_settings():
     return {
-        "company": dict(DEFAULT_APP_SETTINGS["company"])
+        "company": dict(DEFAULT_APP_SETTINGS["company"]),
+        "signing": dict(DEFAULT_APP_SETTINGS["signing"]),
     }
 
 def save_default_app_settings():
@@ -128,6 +157,58 @@ def save_default_filename_config():
     except OSError:
         pass
 
+# ------------------- receipt signing -------------------
+def resolve_app_path(path):
+    """Resolve a config path against APP_DIR (leaves absolute paths untouched)."""
+    clean = str(path).strip()
+    if not clean:
+        return ""
+    if os.path.isabs(clean):
+        return clean
+    return os.path.join(APP_DIR, clean)
+
+
+def signing_key_paths():
+    """Resolved (key_path, cert_path) from appsettings.json signing config."""
+    signing = load_app_settings()["signing"]
+    return (
+        resolve_app_path(signing.get("private_key_path", "")),
+        resolve_app_path(signing.get("certificate_path", "")),
+    )
+
+
+def sign_receipt_pdf(pdf_path):
+    """Sign pdf_path in place using the configured key.
+
+    Returns True when the file was signed, False when signing is disabled in
+    appsettings.json. Raises RuntimeError (with a user-facing message) on any
+    failure so the caller can treat the receipt as failed -- we must never leave
+    behind an unsigned file that claims to be an authentic receipt.
+    """
+    signing = load_app_settings()["signing"]
+    if not signing.get("enabled", True):
+        return False
+
+    key_path, cert_path = signing_key_paths()
+    if not (key_path and os.path.isfile(key_path) and cert_path and os.path.isfile(cert_path)):
+        raise RuntimeError(
+            "Signing is enabled but the signing key/certificate was not found.\n"
+            f"Expected:\n  {key_path or '(unset)'}\n  {cert_path or '(unset)'}\n\n"
+            "Run 'python keygen.py' once to create them, or set signing.enabled to "
+            "false in appsettings.json to generate unsigned receipts."
+        )
+
+    receipt_signing.sign_pdf(
+        pdf_path, key_path, cert_path,
+        passphrase=signing.get("key_passphrase", "") or None,
+        reason=signing.get("reason", "") or None,
+        location=signing.get("location", "") or None,
+        name=signing.get("signer_name", "") or None,
+        tsa_url=signing.get("tsa_url", "") or None,
+    )
+    return True
+
+
 # ------------------- main application -------------------
 class ReceiptApp:
     def __init__(self, root):
@@ -136,6 +217,7 @@ class ReceiptApp:
         root.title(f"{company['name']} - Receipt Generator")
         root.resizable(True, True)
         self._apply_scaling(root)
+        self._build_menu(root)
 
         # --- form fields ---
         main_frame = ttk.Frame(root, padding=10)
@@ -707,11 +789,117 @@ class ReceiptApp:
 
         try:
             self.render_pdf(html_content, pdf_path)
-            self.status_label.config(text=f"Saved: {pdf_path}")
+            signed = sign_receipt_pdf(pdf_path)
+            if signed:
+                self.status_label.config(text=f"Saved & signed: {pdf_path}")
+            else:
+                self.status_label.config(text=f"Saved (unsigned): {pdf_path}")
             self.refresh_invoice_number()
         except Exception as e:
-            messagebox.showerror("PDF Error", f"Failed to create PDF:\n{e}")
+            # If signing failed after the unsigned PDF was written, delete it so a
+            # non-authentic file is never left behind claiming to be a receipt.
+            if os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                except OSError:
+                    pass
+            messagebox.showerror("PDF Error", f"Failed to create signed PDF:\n{e}")
             self.status_label.config(text="PDF generation failed")
+
+    # ------------------- signature tools (menu) -------------------
+    def _build_menu(self, root):
+        menubar = tk.Menu(root)
+        tools = tk.Menu(menubar, tearoff=0)
+        tools.add_command(label="Verify Receipt...", command=self.verify_receipt_dialog)
+        tools.add_command(label="Sign Existing PDF(s)...", command=self.sign_existing_pdfs_dialog)
+        menubar.add_cascade(label="Tools", menu=tools)
+        root.config(menu=menubar)
+
+    def verify_receipt_dialog(self):
+        """Pick a PDF and report one of: Verified / Invalid / Not found."""
+        pdf_path = filedialog.askopenfilename(
+            title="Select a receipt PDF to verify",
+            initialdir=OUTPUT_DIR if os.path.isdir(OUTPUT_DIR) else APP_DIR,
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        )
+        if not pdf_path:
+            return
+
+        _key_path, cert_path = signing_key_paths()
+        try:
+            result = receipt_signing.verify_pdf(pdf_path, cert_path)
+        except FileNotFoundError as exc:
+            messagebox.showerror("Cannot verify", str(exc))
+            self.status_label.config(text="Verification unavailable")
+            return
+        except Exception as exc:
+            messagebox.showerror("Cannot verify", f"Verification failed:\n{exc}")
+            self.status_label.config(text="Verification failed")
+            return
+
+        lines = [result.detail]
+        if result.signer:
+            lines.append(f"\nSigner: {result.signer}")
+        if result.signed_time:
+            lines.append(f"Signed: {result.signed_time}")
+        body = "\n".join(lines)
+
+        if result.status == receipt_signing.VERIFIED:
+            messagebox.showinfo(result.title, body)
+        elif result.status == receipt_signing.NOT_FOUND:
+            messagebox.showwarning(result.title, body)
+        else:
+            messagebox.showerror(result.title, body)
+        self.status_label.config(text=f"{result.title}: {os.path.basename(pdf_path)}")
+
+    def sign_existing_pdfs_dialog(self):
+        """Sign one or more previously generated (unsigned) receipt PDFs in place."""
+        paths = filedialog.askopenfilenames(
+            title="Select PDF(s) to sign",
+            initialdir=OUTPUT_DIR if os.path.isdir(OUTPUT_DIR) else APP_DIR,
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        )
+        if not paths:
+            return
+
+        signing = load_app_settings()["signing"]
+        key_path, cert_path = signing_key_paths()
+        if not (key_path and os.path.isfile(key_path) and cert_path and os.path.isfile(cert_path)):
+            messagebox.showerror(
+                "Cannot sign",
+                "The signing key/certificate was not found.\n"
+                f"Expected:\n  {key_path or '(unset)'}\n  {cert_path or '(unset)'}\n\n"
+                "Run 'python keygen.py' once to create them.",
+            )
+            return
+
+        signed, skipped, failed = 0, 0, []
+        for path in paths:
+            try:
+                if receipt_signing.is_signed(path):
+                    skipped += 1
+                    continue
+                receipt_signing.sign_pdf(
+                    path, key_path, cert_path,
+                    passphrase=signing.get("key_passphrase", "") or None,
+                    reason=signing.get("reason", "") or None,
+                    location=signing.get("location", "") or None,
+                    name=signing.get("signer_name", "") or None,
+                    tsa_url=signing.get("tsa_url", "") or None,
+                )
+                signed += 1
+            except Exception as exc:
+                failed.append(f"{os.path.basename(path)}: {exc}")
+
+        summary = [f"Signed: {signed}", f"Already signed (skipped): {skipped}", f"Failed: {len(failed)}"]
+        if failed:
+            summary.append("\n" + "\n".join(failed))
+        text = "\n".join(summary)
+        if failed:
+            messagebox.showwarning("Sign Existing PDF(s)", text)
+        else:
+            messagebox.showinfo("Sign Existing PDF(s)", text)
+        self.status_label.config(text=f"Signed {signed}, skipped {skipped}, failed {len(failed)}")
 
     def render_pdf(self, body_html, pdf_path):
         try:
@@ -872,7 +1060,7 @@ class ReceiptApp:
         margin-top: 2px;
         color: #64748b;
     }}
-    .no-signature {{
+    .signature-notice {{
         margin-top: 3px;
     }}
 </style>
@@ -903,8 +1091,8 @@ class ReceiptApp:
 <div class="footer-terms">
     By purchasing from Chawla Tech, you agree to our Terms of Service, Privacy Policy, &amp; Warranty Policy (available at chawlatech.pk).
 </div>
-<div class="no-signature">
-    This is a computer-generated receipt and does not require a signature.
+<div class="signature-notice">
+    This receipt is digitally signed by {{company_name}}. Verify its authenticity at chawlatech.pk/verify.
 </div>"""
 
     def render_settings_template(self, template_html):

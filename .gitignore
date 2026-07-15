@@ -5,6 +5,15 @@ invoices/
 *.pdf
 
 # ===========================
+# Receipt signing keys (NEVER commit; NEVER bundle the private key)
+# ===========================
+signing/
+*.pem
+*.p12
+*.pfx
+*.key
+
+# ===========================
 # Store Assets (keep private)
 # ===========================
 logo.png

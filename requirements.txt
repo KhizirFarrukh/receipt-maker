@@ -1,1 +1,3 @@
 playwright>=1.44.0
+pyhanko>=0.25.0
+cryptography>=42.0.0
