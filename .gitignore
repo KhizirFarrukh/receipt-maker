@@ -5,6 +5,11 @@ invoices/
 *.pdf
 
 # ===========================
+# Runtime logs
+# ===========================
+logs/
+
+# ===========================
 # Receipt signing keys (NEVER commit; NEVER bundle the private key)
 # ===========================
 signing/

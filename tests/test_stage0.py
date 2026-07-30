@@ -57,11 +57,17 @@ class Stage0Golden(unittest.TestCase):
 
 
 class Stage0Fidelity(unittest.TestCase):
-    """The headless seam must reproduce the real GUI's generate output."""
+    """The headless harness must reproduce what the real GUI generate path emits.
+
+    Post-Stage-1 the GUI collects a `data` dict and hands it to a worker thread;
+    the HTML is produced by receipt_render.build_html from that dict. So fidelity
+    = the GUI's form-collected data, rendered, equals the harness output.
+    """
 
     def test_headless_matches_gui(self):
         import tkinter as tk
         import main
+        import receipt_render
 
         data = cli.load_data(GOLDEN_INPUT)
         html_headless = cli.render_html_from_data(data, normalize=True)
@@ -69,12 +75,10 @@ class Stage0Fidelity(unittest.TestCase):
         root = tk.Tk()
         root.withdraw()
         captured = {}
-        original_sign = main.sign_receipt_pdf
         try:
             app = main.ReceiptApp(root)
-            # Intercept the HTML the GUI would hand to Playwright; no PDF, no sign.
-            app.render_pdf = lambda body_html, pdf_path: captured.__setitem__("html", body_html)
-            main.sign_receipt_pdf = lambda pdf_path: False
+            # Capture the data the GUI collected; do not start the worker/Playwright.
+            app._run_generation = lambda d, out_path: captured.update(data=d, out=out_path)
 
             a = cli._to_build_html_args(data)
             app.receipt_type.set(a["receipt_type"])
@@ -94,11 +98,145 @@ class Stage0Fidelity(unittest.TestCase):
 
             app.generate_pdf()
         finally:
-            main.sign_receipt_pdf = original_sign
             root.destroy()
 
-        self.assertIn("html", captured, "GUI never reached render_pdf (generation failed)")
-        self.assertEqual(html_headless, cli.normalize_html(captured["html"]))
+        self.assertIn("data", captured, "GUI never reached generation (validation failed)")
+        d = captured["data"]
+        html_gui = cli.normalize_html(receipt_render.build_html(
+            d["inv_no"], d["date_str"], d["cust"], d["phone"], d["email"],
+            d["items"], d["receipt_type"], d["shipping"],
+        ))
+        self.assertEqual(html_headless, html_gui)
+
+
+class Stage1Layering(unittest.TestCase):
+    """The render/service/config layers must not depend on tkinter."""
+
+    def test_render_path_imports_no_tkinter(self):
+        import subprocess
+
+        code = (
+            "import sys, cli;"
+            "cli.render_html_from_data(cli.load_data(r'%s'));"
+            "assert 'tkinter' not in sys.modules, 'tkinter leaked into render path';"
+            "print('ok')" % GOLDEN_INPUT.replace("\\", "\\\\")
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code], cwd=PROJ,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("ok", out.stdout)
+
+    def test_tkfree_modules_import_without_tkinter(self):
+        import subprocess
+
+        code = (
+            "import sys, config, receipt_render, receipt_service;"
+            "assert 'tkinter' not in sys.modules, 'tkinter leaked';"
+            "print('ok')"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code], cwd=PROJ,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("ok", out.stdout)
+
+
+class Stage1GenerationUX(unittest.TestCase):
+    """The threaded progress + error wiring works without Playwright."""
+
+    DATA = {
+        "inv_no": "INV-W1001", "date_str": "15 Jan 2026", "cust": "Ada",
+        "phone": "", "email": "", "items": [{"desc": "x", "qty": 1, "price": 1.0}],
+        "receipt_type": "Online", "shipping": 0.0,
+    }
+
+    def _drive(self, app, root, out_path):
+        import time
+        app._run_generation(dict(self.DATA), out_path)
+        for _ in range(400):
+            root.update()
+            if not getattr(app, "_generating", True):
+                break
+            time.sleep(0.005)
+
+    def test_success_path(self):
+        import tkinter as tk
+        import main
+        import receipt_service
+
+        root = tk.Tk(); root.withdraw()
+        orig_gen, orig_ask = receipt_service.generate, main.messagebox.askyesno
+        try:
+            app = main.ReceiptApp(root)
+            steps = []
+
+            def fake_generate(data, out_path, progress_cb=None):
+                for i in range(1, receipt_service.GENERATION_STEPS + 1):
+                    if progress_cb:
+                        progress_cb(i, f"step {i}")
+                    steps.append(i)
+                return True
+
+            receipt_service.generate = fake_generate
+            main.messagebox.askyesno = lambda *a, **k: False  # skip folder prompt
+
+            self.assertEqual(str(app.generate_button["state"]), "normal")
+            self._drive(app, root, os.path.join(PROJ, "invoices", "_uxtest.pdf"))
+
+            self.assertFalse(app._generating, "generation flag not reset")
+            self.assertEqual(str(app.generate_button["state"]), "normal", "button not re-enabled")
+            self.assertEqual(steps, [1, 2, 3, 4], "progress steps not reported")
+            self.assertIn("signed", app.status_label["text"])
+        finally:
+            receipt_service.generate, main.messagebox.askyesno = orig_gen, orig_ask
+            root.destroy()
+
+    def test_error_path_shows_diagnostic(self):
+        import tkinter as tk
+        import main
+        import receipt_service
+
+        root = tk.Tk(); root.withdraw()
+        orig_gen, orig_err = receipt_service.generate, main.show_error
+        captured = {}
+        try:
+            app = main.ReceiptApp(root)
+
+            def boom(data, out_path, progress_cb=None):
+                raise RuntimeError("signing key not found")
+
+            receipt_service.generate = boom
+            main.show_error = lambda parent, title, summary, detail=None: captured.update(
+                title=title, summary=summary, detail=detail)
+
+            self._drive(app, root, os.path.join(PROJ, "invoices", "_uxtest.pdf"))
+
+            self.assertFalse(app._generating)
+            self.assertEqual(str(app.generate_button["state"]), "normal")
+            self.assertIn("signing key not found", captured.get("summary", ""))
+            self.assertIsNotNone(captured.get("detail"), "no traceback passed to show_error")
+            self.assertIn("PDF generation failed", app.status_label["text"])
+        finally:
+            receipt_service.generate, main.show_error = orig_gen, orig_err
+            root.destroy()
+
+    def test_concurrent_guard(self):
+        import tkinter as tk
+        import main
+
+        root = tk.Tk(); root.withdraw()
+        try:
+            app = main.ReceiptApp(root)
+            app._generating = True  # pretend a job is in flight
+            calls = []
+            app.root.after = lambda *a, **k: calls.append(1)  # would schedule the poll loop
+            app._run_generation(dict(self.DATA), "x.pdf")
+            self.assertEqual(calls, [], "a second worker/poll was scheduled while generating")
+        finally:
+            root.destroy()
 
 
 class Stage0Smoke(unittest.TestCase):

@@ -1,215 +1,139 @@
+"""Receipt Generator — tkinter GUI.
+
+Stage 1 refactor: this module is GUI-only. HTML rendering lives in
+receipt_render, headless generation (numbering/PDF/signing) in receipt_service,
+config in config. Generation runs on a worker thread behind a modal progress
+dialog; failures surface through show_error.
+"""
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import base64
 import calendar
 from datetime import date, datetime
-import json
-import mimetypes
+import logging
+import logging.handlers
 import os
+import queue
 import re
 import sys
-import html as html_utils
+import threading
+import traceback
 
+import config  # noqa: F401  (import sets frozen PLAYWRIGHT_BROWSERS_PATH)
+import receipt_render
+import receipt_service
 import receipt_signing
-
-# ------------------- file paths -------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else BASE_DIR
-RESOURCE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
-HEADER_FILE = os.path.join(RESOURCE_DIR, "header.html")
-FOOTER_FILE = os.path.join(RESOURCE_DIR, "footer.html")
-APP_SETTINGS_FILE = os.path.join(APP_DIR, "appsettings.json")
-FILENAME_CONFIG_FILE = os.path.join(APP_DIR, "filename_config.json")
-OUTPUT_DIR = os.path.join(APP_DIR, "invoices")
-PDF_MARGIN_TOP = "150px"
-PDF_MARGIN_BOTTOM = "100px"
-PDF_MARGIN_LEFT = "24px"
-PDF_MARGIN_RIGHT = "24px"
-
-if getattr(sys, "frozen", False):
-    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(RESOURCE_DIR, "ms-playwright"))
-
-# ------------------- receipt type / invoice numbering config -------------------
-# Each receipt type keeps its own invoice series via a single-letter prefix.
-RECEIPT_TYPES = {
-    "Online":   "W",   # web purchase
-    "In Store": "S",   # in-store purchase
-}
-INVOICE_PREFIX_BASE = "INV-"
-INVOICE_START_NUMBER = 1001  # first number for a fresh series, e.g. INV-W1001 / INV-S1001
-DATE_DISPLAY_FORMAT = "%d %b %Y"
-DATE_PARSE_FORMATS = (
+from config import (
+    APP_DIR,
+    OUTPUT_DIR,
+    RECEIPT_TYPES,
     DATE_DISPLAY_FORMAT,
-    "%Y-%m-%d",
-    "%d/%m/%Y",
-    "%d-%m-%Y",
-    "%m/%d/%Y",
+    DATE_PARSE_FORMATS,
+    load_app_settings,
 )
-FILENAME_FIELD_OPTIONS = ("date", "name", "email", "phone")
-DEFAULT_FILENAME_FIELDS = ["date", "name"]
-DEFAULT_APP_SETTINGS = {
-    "company": {
-        "name": "Your Company",
-        "address": "Your business address",
-        "phone": "000-000-0000",
-        "email": "hello@example.com",
-        "logo_path": "logo.png",
-    },
-    # Digital-signature settings. When enabled, every generated receipt is signed
-    # with a PAdES signature using the private key created by keygen.py, so a
-    # forged or edited receipt fails verification against the public certificate.
-    "signing": {
-        "enabled": True,
-        "private_key_path": "signing/private_key.pem",
-        "certificate_path": "signing/certificate.pem",
-        "key_passphrase": "",
-        "signer_name": "Chawla Tech",
-        "reason": "Receipt authenticity",
-        "location": "chawlatech.pk",
-        "tsa_url": "",
-    },
-}
 
-# ------------------- read HTML snippets -------------------
-def read_html_file(path):
-    if not os.path.exists(path):
-        return ""
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+# ------------------- logging -------------------
+LOG_DIR = os.path.join(APP_DIR, "logs")
+LOG_FILE = os.path.join(LOG_DIR, "receipt-maker.log")
 
-def load_app_settings():
-    if not os.path.exists(APP_SETTINGS_FILE):
-        save_default_app_settings()
-        return default_app_settings()
 
+def _setup_logging():
+    """Rotating log file so failures can be diagnosed after the fact."""
+    log = logging.getLogger("receipt_maker")
+    log.setLevel(logging.INFO)
+    if log.handlers:
+        return log
     try:
-        with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return default_app_settings()
-
-    settings = default_app_settings()
-    if not isinstance(config, dict):
-        return settings
-
-    company_config = config.get("company", {})
-    if isinstance(company_config, dict):
-        for key in settings["company"]:
-            value = company_config.get(key)
-            if isinstance(value, str):
-                settings["company"][key] = value.strip()
-
-    signing_config = config.get("signing", {})
-    if isinstance(signing_config, dict):
-        for key, default_value in settings["signing"].items():
-            value = signing_config.get(key)
-            if isinstance(default_value, bool):
-                if isinstance(value, bool):
-                    settings["signing"][key] = value
-            elif isinstance(value, str):
-                settings["signing"][key] = value.strip()
-    return settings
-
-def default_app_settings():
-    return {
-        "company": dict(DEFAULT_APP_SETTINGS["company"]),
-        "signing": dict(DEFAULT_APP_SETTINGS["signing"]),
-    }
-
-def save_default_app_settings():
-    try:
-        with open(APP_SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_APP_SETTINGS, f, indent=2)
-            f.write("\n")
-    except OSError:
-        pass
-
-def load_filename_fields():
-    if not os.path.exists(FILENAME_CONFIG_FILE):
-        save_default_filename_config()
-        return DEFAULT_FILENAME_FIELDS
-
-    try:
-        with open(FILENAME_CONFIG_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return DEFAULT_FILENAME_FIELDS
-
-    fields = config.get("filename_fields", DEFAULT_FILENAME_FIELDS)
-    if not isinstance(fields, list):
-        return DEFAULT_FILENAME_FIELDS
-
-    selected_fields = []
-    for field in fields:
-        if field in FILENAME_FIELD_OPTIONS and field not in selected_fields:
-            selected_fields.append(field)
-    return selected_fields
-
-def save_default_filename_config():
-    config = {
-        "filename_fields": DEFAULT_FILENAME_FIELDS,
-        "available_fields": list(FILENAME_FIELD_OPTIONS),
-    }
-    try:
-        with open(FILENAME_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
-            f.write("\n")
-    except OSError:
-        pass
-
-# ------------------- receipt signing -------------------
-def resolve_app_path(path):
-    """Resolve a config path against APP_DIR (leaves absolute paths untouched)."""
-    clean = str(path).strip()
-    if not clean:
-        return ""
-    if os.path.isabs(clean):
-        return clean
-    return os.path.join(APP_DIR, clean)
-
-
-def signing_key_paths():
-    """Resolved (key_path, cert_path) from appsettings.json signing config."""
-    signing = load_app_settings()["signing"]
-    return (
-        resolve_app_path(signing.get("private_key_path", "")),
-        resolve_app_path(signing.get("certificate_path", "")),
-    )
-
-
-def sign_receipt_pdf(pdf_path):
-    """Sign pdf_path in place using the configured key.
-
-    Returns True when the file was signed, False when signing is disabled in
-    appsettings.json. Raises RuntimeError (with a user-facing message) on any
-    failure so the caller can treat the receipt as failed -- we must never leave
-    behind an unsigned file that claims to be an authentic receipt.
-    """
-    signing = load_app_settings()["signing"]
-    if not signing.get("enabled", True):
-        return False
-
-    key_path, cert_path = signing_key_paths()
-    if not (key_path and os.path.isfile(key_path) and cert_path and os.path.isfile(cert_path)):
-        raise RuntimeError(
-            "Signing is enabled but the signing key/certificate was not found.\n"
-            f"Expected:\n  {key_path or '(unset)'}\n  {cert_path or '(unset)'}\n\n"
-            "Run 'python keygen.py' once to create them, or set signing.enabled to "
-            "false in appsettings.json to generate unsigned receipts."
+        os.makedirs(LOG_DIR, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            LOG_FILE, maxBytes=512 * 1024, backupCount=5, encoding="utf-8",
         )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(handler)
+    except OSError:
+        pass
+    return log
 
-    receipt_signing.sign_pdf(
-        pdf_path, key_path, cert_path,
-        passphrase=signing.get("key_passphrase", "") or None,
-        reason=signing.get("reason", "") or None,
-        location=signing.get("location", "") or None,
-        name=signing.get("signer_name", "") or None,
-        tsa_url=signing.get("tsa_url", "") or None,
-    )
-    return True
+
+logger = _setup_logging()
+
+
+# ------------------- modal dialog helpers -------------------
+def _center_over(win, parent):
+    win.update_idletasks()
+    x = parent.winfo_rootx() + max(0, (parent.winfo_width() - win.winfo_width()) // 2)
+    y = parent.winfo_rooty() + max(0, (parent.winfo_height() - win.winfo_height()) // 2)
+    win.geometry(f"+{x}+{y}")
+
+
+def _safe_grab(win):
+    try:
+        win.grab_set()
+    except tk.TclError:
+        pass
+
+
+def _make_modal(win, parent):
+    """Tie win to parent and grab input so the main window is locked while open."""
+    win.transient(parent)
+    win.resizable(False, False)
+    _center_over(win, parent)
+    try:
+        win.grab_set()
+    except tk.TclError:
+        # Not viewable yet (or parent hidden) -- grab once it maps.
+        win.after(50, lambda: _safe_grab(win))
+    win.focus_set()
+
+
+def show_error(parent, title, summary, detail=None):
+    """Modal, diagnosable error dialog: plain summary + expandable Details.
+
+    The main window stays locked until this is dismissed. Everything is logged.
+    """
+    logger.error("%s -- %s%s", title, summary, ("\n" + detail) if detail else "")
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    frame = ttk.Frame(dialog, padding=16)
+    frame.pack(fill=tk.BOTH, expand=True)
+    ttk.Label(frame, text=summary, wraplength=460, justify=tk.LEFT).pack(anchor=tk.W, fill=tk.X)
+
+    if detail:
+        state = {"open": False}
+
+        controls = ttk.Frame(frame)
+        controls.pack(anchor=tk.W, fill=tk.X, pady=(10, 0))
+        detail_box = tk.Text(frame, height=10, width=72, wrap=tk.WORD)
+        detail_box.insert("1.0", detail)
+        detail_box.config(state=tk.DISABLED)
+
+        def toggle():
+            if state["open"]:
+                detail_box.pack_forget()
+                toggle_btn.config(text="Show details ▾")
+            else:
+                detail_box.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+                toggle_btn.config(text="Hide details ▴")
+            state["open"] = not state["open"]
+            dialog.update_idletasks()
+            _center_over(dialog, parent)
+
+        def copy_details():
+            dialog.clipboard_clear()
+            dialog.clipboard_append(detail)
+
+        toggle_btn = ttk.Button(controls, text="Show details ▾", command=toggle)
+        toggle_btn.pack(side=tk.LEFT)
+        ttk.Button(controls, text="Copy details", command=copy_details).pack(side=tk.LEFT, padx=6)
+        ttk.Label(frame, text=f"Log: {LOG_FILE}", foreground="#64748b").pack(anchor=tk.W, pady=(6, 0))
+
+    ttk.Button(frame, text="OK", command=dialog.destroy).pack(pady=(14, 0))
+    _make_modal(dialog, parent)
+    parent.wait_window(dialog)
 
 
 # ------------------- main application -------------------
+
+
 class ReceiptApp:
     def __init__(self, root):
         self.root = root
@@ -317,7 +241,8 @@ class ReceiptApp:
         # --- action buttons ---
         actions_frame = ttk.Frame(main_frame)
         actions_frame.grid(row=4, column=0, columnspan=6, pady=15)
-        ttk.Button(actions_frame, text="Generate PDF Receipt", command=self.generate_pdf).pack(side=tk.LEFT, padx=5)
+        self.generate_button = ttk.Button(actions_frame, text="Generate PDF Receipt", command=self.generate_pdf)
+        self.generate_button.pack(side=tk.LEFT, padx=5)
         ttk.Button(actions_frame, text="Clear Form", command=self.clear_form).pack(side=tk.LEFT, padx=5)
 
         # status label
@@ -379,36 +304,9 @@ class ReceiptApp:
         root.geometry(f"{open_w}x{open_h}+{x}+{y}")
 
     # ------------------- invoice numbering -------------------
-    def get_invoice_prefix(self, type_label=None):
-        type_label = type_label or self.receipt_type.get()
-        return f"{INVOICE_PREFIX_BASE}{RECEIPT_TYPES[type_label]}"
-
-    def get_next_invoice_number(self, prefix):
-        if not os.path.exists(OUTPUT_DIR):
-            os.makedirs(OUTPUT_DIR)
-        max_num = INVOICE_START_NUMBER - 1
-        letter = prefix[len(INVOICE_PREFIX_BASE):]
-        # The online series also counts legacy unlettered INV-#### files
-        # (those belong to online); the in-store series counts only its own.
-        if letter.upper() == RECEIPT_TYPES["Online"]:
-            letter_pattern = f"{re.escape(letter)}?"
-        else:
-            letter_pattern = re.escape(letter)
-        pattern = re.compile(
-            rf"^{re.escape(INVOICE_PREFIX_BASE)}{letter_pattern}(\d+)(?:-.*)?\.pdf$",
-            re.IGNORECASE,
-        )
-        for fname in os.listdir(OUTPUT_DIR):
-            match = pattern.match(fname)
-            if match:
-                num = int(match.group(1))
-                if num > max_num:
-                    max_num = num
-        return max_num + 1
-
     def refresh_invoice_number(self):
-        prefix = self.get_invoice_prefix()
-        next_num = self.get_next_invoice_number(prefix)
+        prefix = receipt_service.get_invoice_prefix(self.receipt_type.get())
+        next_num = receipt_service.get_next_invoice_number(prefix)
         self.inv_no.set(f"{prefix}{next_num}")
 
     # ------------------- date picker -------------------
@@ -766,12 +664,21 @@ class ReceiptApp:
             messagebox.showerror("Error", "At least one item is required.")
             return
 
-        html_content = self.build_html(
-            inv_no, date_str, cust, phone, email, items, receipt_type, shipping_float
-        )
+        data = {
+            "inv_no": inv_no,
+            "date_str": date_str,
+            "cust": cust,
+            "phone": phone,
+            "email": email,
+            "items": items,
+            "receipt_type": receipt_type,
+            "shipping": shipping_float,
+        }
 
+        # Resolve the output path (and any collision) on the main thread, before
+        # the worker starts, because the collision prompt is a UI decision.
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        base_filename = self.build_pdf_filename(inv_no, date_str, cust, email, phone)
+        base_filename = receipt_service.build_pdf_filename(inv_no, date_str, cust, email, phone)
         pdf_path = os.path.join(OUTPUT_DIR, base_filename)
         if os.path.exists(pdf_path):
             answer = messagebox.askyesnocancel(
@@ -785,26 +692,106 @@ class ReceiptApp:
                 self.status_label.config(text="Save cancelled")
                 return
             if not answer:  # No -> keep the existing file, save a numbered copy
-                pdf_path = self.next_available_pdf_path(base_filename)
+                pdf_path = receipt_service.next_available_pdf_path(base_filename)
 
+        self._run_generation(data, pdf_path)
+
+    def _run_generation(self, data, out_path):
+        """Generate on a worker thread behind a modal progress dialog.
+
+        The main window is locked and the Generate button disabled for the
+        duration, so a second job can't start against the same path/number.
+        """
+        if getattr(self, "_generating", False):
+            return  # a job is already running; never spawn a second worker
+        self._generating = True
+        self.generate_button.config(state=tk.DISABLED)
+        self.status_label.config(text="Generating...")
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Generating Receipt")
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)  # can't close mid-job
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        status_var = tk.StringVar(value="Starting...")
+        ttk.Label(frame, textvariable=status_var, width=42, anchor=tk.W).pack(anchor=tk.W, fill=tk.X)
+        bar = ttk.Progressbar(frame, mode="determinate",
+                              maximum=receipt_service.GENERATION_STEPS, length=320)
+        bar.pack(fill=tk.X, pady=(10, 0))
+        _make_modal(dialog, self.root)
+
+        result_q = queue.Queue()
+
+        def progress_cb(step, label):
+            result_q.put(("progress", step, label))
+
+        def worker():
+            try:
+                signed = receipt_service.generate(data, out_path, progress_cb)
+                result_q.put(("done", signed))
+            except Exception as exc:  # noqa: BLE001 - reported via show_error
+                result_q.put(("error", exc, traceback.format_exc()))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        def close_dialog():
+            self._generating = False
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+            self.generate_button.config(state=tk.NORMAL)
+
+        def poll():
+            try:
+                while True:
+                    msg = result_q.get_nowait()
+                    if msg[0] == "progress":
+                        _, step, label = msg
+                        bar["value"] = step
+                        status_var.set(label)
+                    elif msg[0] == "done":
+                        close_dialog()
+                        self._on_generated(out_path, msg[1])
+                        return
+                    elif msg[0] == "error":
+                        _, exc, tb = msg
+                        close_dialog()
+                        self.status_label.config(text="PDF generation failed")
+                        logger.error("Generation failed for %s", out_path)
+                        show_error(self.root, "Receipt generation failed", str(exc), tb)
+                        return
+            except queue.Empty:
+                pass
+            self.root.after(50, poll)
+
+        self.root.after(50, poll)
+
+    def _on_generated(self, out_path, signed):
+        state = "signed" if signed else "unsigned"
+        self.status_label.config(text=f"Saved ({state}): {out_path}")
+        self.refresh_invoice_number()
+        logger.info("Generated %s (%s)", out_path, state)
+        if messagebox.askyesno(
+            "Receipt generated",
+            f"✓ Receipt {state} and saved:\n{out_path}\n\nOpen the containing folder?",
+        ):
+            self._open_folder(os.path.dirname(out_path))
+
+    @staticmethod
+    def _open_folder(path):
         try:
-            self.render_pdf(html_content, pdf_path)
-            signed = sign_receipt_pdf(pdf_path)
-            if signed:
-                self.status_label.config(text=f"Saved & signed: {pdf_path}")
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.Popen(["open", path])
             else:
-                self.status_label.config(text=f"Saved (unsigned): {pdf_path}")
-            self.refresh_invoice_number()
-        except Exception as e:
-            # If signing failed after the unsigned PDF was written, delete it so a
-            # non-authentic file is never left behind claiming to be a receipt.
-            if os.path.exists(pdf_path):
-                try:
-                    os.remove(pdf_path)
-                except OSError:
-                    pass
-            messagebox.showerror("PDF Error", f"Failed to create signed PDF:\n{e}")
-            self.status_label.config(text="PDF generation failed")
+                import subprocess
+                subprocess.Popen(["xdg-open", path])
+        except Exception:
+            pass
 
     # ------------------- signature tools (menu) -------------------
     def _build_menu(self, root):
@@ -825,7 +812,7 @@ class ReceiptApp:
         if not pdf_path:
             return
 
-        _key_path, cert_path = signing_key_paths()
+        _key_path, cert_path = receipt_service.signing_key_paths()
         try:
             result = receipt_signing.verify_pdf(pdf_path, cert_path)
         except FileNotFoundError as exc:
@@ -863,7 +850,7 @@ class ReceiptApp:
             return
 
         signing = load_app_settings()["signing"]
-        key_path, cert_path = signing_key_paths()
+        key_path, cert_path = receipt_service.signing_key_paths()
         if not (key_path and os.path.isfile(key_path) and cert_path and os.path.isfile(cert_path)):
             messagebox.showerror(
                 "Cannot sign",
@@ -901,649 +888,10 @@ class ReceiptApp:
             messagebox.showinfo("Sign Existing PDF(s)", text)
         self.status_label.config(text=f"Signed {signed}, skipped {skipped}, failed {len(failed)}")
 
-    def render_pdf(self, body_html, pdf_path):
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:
-            raise RuntimeError(
-                "Playwright is not installed.\n"
-                "Run: python -m pip install -r requirements.txt\n"
-                "Then run once: python -m playwright install chromium"
-            ) from exc
-
-        pdf_options = {
-            "path": pdf_path,
-            "format": "A4",
-            "print_background": True,
-            "display_header_footer": True,
-            "header_template": self.build_page_header_template(),
-            "footer_template": self.build_page_footer_template(),
-            "margin": {
-                "top": PDF_MARGIN_TOP,
-                "bottom": PDF_MARGIN_BOTTOM,
-                "left": PDF_MARGIN_LEFT,
-                "right": PDF_MARGIN_RIGHT,
-            },
-        }
-
-        try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch()
-                try:
-                    page = browser.new_page()
-                    page.set_content(body_html, wait_until="load")
-                    page.pdf(**pdf_options)
-                finally:
-                    browser.close()
-        except Exception as exc:
-            message = str(exc)
-            if "Executable doesn't exist" in message or "playwright install" in message:
-                raise RuntimeError(
-                    "Playwright's Chromium browser is not installed.\n"
-                    "Run once: python -m playwright install chromium"
-                ) from exc
-            raise
-
-    def build_pdf_filename(self, inv_no, date_str, cust, email, phone):
-        filename_values = {
-            "date": date_str,
-            "name": cust,
-            "email": email,
-            "phone": phone,
-        }
-        filename_parts = [self.sanitize_filename_part(inv_no)]
-
-        for field in load_filename_fields():
-            value = filename_values.get(field, "")
-            clean_value = self.sanitize_filename_part(value)
-            if clean_value:
-                filename_parts.append(clean_value)
-
-        return "-".join(filename_parts) + ".pdf"
-
-    @staticmethod
-    def next_available_pdf_path(base_filename):
-        """Return a path for base_filename with the smallest free -N suffix
-        (e.g. INV-W1001.pdf -> INV-W1001-1.pdf -> INV-W1001-2.pdf)."""
-        stem, ext = os.path.splitext(base_filename)
-        n = 1
-        while True:
-            candidate = os.path.join(OUTPUT_DIR, f"{stem}-{n}{ext}")
-            if not os.path.exists(candidate):
-                return candidate
-            n += 1
-
-    def sanitize_filename_part(self, value):
-        clean_value = str(value).strip()
-        clean_value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", clean_value)
-        clean_value = re.sub(r"\s+", " ", clean_value).strip(" .")
-        return clean_value
-
-    def build_page_header_template(self):
-        header_html = read_html_file(HEADER_FILE).strip() or self.default_header_html()
-        header_html = self.render_settings_template(header_html)
-        header_html = self.inline_local_images(header_html)
-        return f"""<style>
-    html, body {{
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        font-family: Arial, Helvetica, sans-serif;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }}
-    .pdf-header {{
-        box-sizing: border-box;
-        width: 100%;
-        padding: 12px {PDF_MARGIN_RIGHT} 0 {PDF_MARGIN_LEFT};
-        color: #111827;
-    }}
-    .store-header {{
-        text-align: center;
-        border-bottom: 2px solid #1e293b;
-        padding-bottom: 7px;
-    }}
-    .store-logo-img {{
-        display: block;
-        max-height: 52px;
-        max-width: 190px;
-        object-fit: contain;
-        margin: 0 auto 3px auto;
-    }}
-    .store-name {{
-        font-size: 18px;
-        line-height: 1.1;
-        font-weight: 700;
-    }}
-    .store-details {{
-        margin-top: 3px;
-        font-size: 8px;
-        line-height: 1.35;
-        color: #334155;
-    }}
-</style>
-<div class="pdf-header">{header_html}</div>"""
-
-    def build_page_footer_template(self):
-        footer_html = read_html_file(FOOTER_FILE).strip() or self.default_footer_html()
-        footer_html = self.render_settings_template(footer_html)
-        footer_html = self.inline_local_images(footer_html)
-        return f"""<style>
-    html, body {{
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        font-family: Arial, Helvetica, sans-serif;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }}
-    .pdf-footer {{
-        box-sizing: border-box;
-        width: 100%;
-        padding: 6px {PDF_MARGIN_RIGHT} 0 {PDF_MARGIN_LEFT};
-        text-align: center;
-        color: #475569;
-        font-size: 8px;
-        line-height: 1.35;
-    }}
-    .footer-inner {{
-        border-top: 1px solid #e2e8f0;
-        padding-top: 7px;
-    }}
-    .footer-text {{
-        font-weight: 600;
-    }}
-    .footer-policy {{
-        margin-top: 3px;
-    }}
-    .footer-terms {{
-        margin-top: 2px;
-        color: #64748b;
-    }}
-    .signature-notice {{
-        margin-top: 3px;
-    }}
-</style>
-<div class="pdf-footer">
-    <div class="footer-inner">{footer_html}</div>
-</div>"""
-
-    def default_header_html(self):
-        return """
-<div class="store-header">
-    <img src="{{company_logo}}" alt="{{company_name}} Logo" class="store-logo-img" onerror="this.style.display='none';">
-    <div class="store-name">{{company_name}}</div>
-    <div class="store-details">
-        {{company_address}}<br>
-        {{company_phone}} | {{company_email}}
-    </div>
-</div>"""
-
-    @staticmethod
-    def default_footer_html():
-        return """
-<div class="footer-text">
-    Thank you for choosing {{company_name}}. Warranty claims require original receipt.
-</div>
-<div class="footer-policy">
-    For our detailed warranty policy, visit https://chawlatech.pk/pages/warranty-policy
-</div>
-<div class="footer-terms">
-    By purchasing from Chawla Tech, you agree to our Terms of Service, Privacy Policy, &amp; Warranty Policy (available at chawlatech.pk).
-</div>
-<div class="signature-notice">
-    This receipt is digitally signed by {{company_name}}. Verify its authenticity at chawlatech.pk/verify.
-</div>"""
-
-    def render_settings_template(self, template_html):
-        company = load_app_settings()["company"]
-        logo_path = company["logo_path"]
-        if not self.logo_source_available(logo_path):
-            template_html = self.remove_logo_image_tags(template_html)
-            logo_path = ""
-
-        replacements = {
-            "{{company_name}}": self.escape(company["name"]),
-            "{{company_address}}": self.escape_address(company["address"]),
-            "{{company_phone}}": self.escape(company["phone"]),
-            "{{company_email}}": self.escape(company["email"]),
-            "{{company_logo}}": self.escape(logo_path),
-            "{{company_logo_path}}": self.escape(logo_path),
-        }
-
-        for placeholder, value in replacements.items():
-            template_html = template_html.replace(placeholder, value)
-        return template_html
-
-    @staticmethod
-    def logo_source_available(src):
-        clean_src = str(src).strip()
-        if not clean_src:
-            return False
-
-        lowered = clean_src.lower()
-        if lowered.startswith(("data:", "http://", "https://", "file:", "about:")):
-            return True
-
-        return os.path.isfile(ReceiptApp.resolve_local_asset_path(clean_src))
-
-    @staticmethod
-    def remove_logo_image_tags(template_html):
-        return re.sub(
-            r"\s*<img\b[^>]*\bsrc\s*=\s*(['\"])\{\{company_logo(?:_path)?\}\}\1[^>]*>\s*",
-            "\n",
-            template_html,
-            flags=re.IGNORECASE,
-        )
-
-    def escape_address(self, address):
-        lines = [line.strip() for line in str(address).splitlines() if line.strip()]
-        if not lines:
-            return ""
-        return "<br>".join(self.escape(line) for line in lines)
-
-    @staticmethod
-    def inline_local_images(html):
-        def replace_src(match):
-            quote = match.group(1)
-            src = html_utils.unescape(match.group(2).strip())
-            lowered = src.lower()
-            if lowered.startswith(("data:", "http://", "https://", "file:", "about:")):
-                return match.group(0)
-
-            image_path = ReceiptApp.resolve_local_asset_path(src)
-            if not os.path.isfile(image_path):
-                return match.group(0)
-
-            mime_type = mimetypes.guess_type(image_path)[0] or "application/octet-stream"
-            with open(image_path, "rb") as image_file:
-                encoded = base64.b64encode(image_file.read()).decode("ascii")
-            return f'src={quote}data:{mime_type};base64,{encoded}{quote}'
-
-        return re.sub(r"src=(['\"])([^'\"]+)\1", replace_src, html, flags=re.IGNORECASE)
-
-    @staticmethod
-    def resolve_local_asset_path(src):
-        clean_src = src.split("#", 1)[0].split("?", 1)[0].strip()
-        if not clean_src:
-            return ""
-
-        if os.path.isabs(clean_src):
-            return os.path.abspath(clean_src)
-
-        for base_dir in (APP_DIR, RESOURCE_DIR):
-            asset_path = os.path.abspath(os.path.join(base_dir, clean_src))
-            try:
-                if os.path.commonpath([base_dir, asset_path]) != base_dir:
-                    continue
-            except ValueError:
-                continue
-
-            if os.path.isfile(asset_path):
-                return asset_path
-        return ""
-
-    @staticmethod
-    def file_url_for_directory(path):
-        normalized = os.path.abspath(path).replace("\\", "/").rstrip("/")
-        return f"file:///{normalized}/"
-
-    # ------------------- HTML construction -------------------
-    def build_html(self, inv_no, date_str, cust, phone, email, items, receipt_type="Online", shipping=0.0):
-        type_badge = "ONLINE ORDER" if receipt_type == "Online" else "IN-STORE SALE"
-
-        # Optional columns appear only when at least one line item uses them.
-        show_discount = any(i.get("discount", 0.0) for i in items)
-        show_tax = any(i.get("tax", 0.0) for i in items)
-
-        header_cells = (
-            "<th>SKU</th><th>Item Description</th><th>Serial Number</th>"
-            "<th>Qty</th><th>Unit Price</th>"
-        )
-        if show_discount:
-            header_cells += "<th>Discount</th>"
-        if show_tax:
-            header_cells += "<th>Tax</th>"
-        header_cells += "<th>Amount</th>"
-
-        rows_html = ""
-        for item in items:
-            warranty_display = ""
-            if item["warranty"] and item["warranty"] != "No Warranty":
-                warranty_display = (
-                    f'<br/><span class="item-warranty-text">'
-                    f'{self.escape(item["warranty"])}</span>'
-                )
-            discount = item.get("discount", 0.0)
-            tax = item.get("tax", 0.0)
-            amount = item["qty"] * item["price"]
-            cells = (
-                f"<td>{self.escape(item['sku']) or '-'}</td>"
-                f"<td>{self.escape(item['desc'])}{warranty_display}</td>"
-                f"<td>{self.escape(item['serial']) or '-'}</td>"
-                f'<td class="num">{item["qty"]}</td>'
-                f'<td class="num">Rs. {item["price"]:.2f}</td>'
-            )
-            if show_discount:
-                cells += f'<td class="num">{("Rs. %.2f" % discount) if discount else "-"}</td>'
-            if show_tax:
-                cells += f'<td class="num">{("Rs. %.2f" % tax) if tax else "-"}</td>'
-            cells += f'<td class="num">Rs. {amount:.2f}</td>'
-            rows_html += f"<tr>{cells}</tr>"
-
-        subtotal = sum(i["qty"] * i["price"] for i in items)
-        total_discount = sum(i.get("discount", 0.0) for i in items)
-        total_tax = sum(i.get("tax", 0.0) for i in items)
-        total = subtotal + total_tax - total_discount + shipping
-
-        # Break out the subtotal/components only when there is something besides
-        # the line items to show; otherwise just show TOTAL.
-        totals_rows = ""
-        if total_tax or total_discount or shipping:
-            totals_rows += (
-                f'<tr class="totals-sub"><td>Subtotal</td>'
-                f'<td align="right">Rs. {subtotal:,.2f}</td></tr>'
-            )
-            if total_tax:
-                totals_rows += (
-                    f'<tr class="totals-sub"><td>Taxes</td>'
-                    f'<td align="right">Rs. {total_tax:,.2f}</td></tr>'
-                )
-            if total_discount:
-                totals_rows += (
-                    f'<tr class="totals-sub"><td>Discounts</td>'
-                    f'<td align="right">- Rs. {total_discount:,.2f}</td></tr>'
-                )
-            if shipping:
-                totals_rows += (
-                    f'<tr class="totals-sub"><td>Shipping Fees</td>'
-                    f'<td align="right">Rs. {shipping:,.2f}</td></tr>'
-                )
-
-        return f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<base href="{self.file_url_for_directory(RESOURCE_DIR)}">
-<style>
-    @page {{
-        size: A4;
-    }}
-    html, body {{
-        margin: 0;
-        padding: 0;
-    }}
-    body {{
-        font-family: Helvetica, Arial, sans-serif;
-        font-size: 10pt;
-        color: #111;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }}
-    .receipt-title {{
-        font-size: 14pt;
-        font-weight: bold;
-        text-align: center;
-        margin: 0 0 4px 0;
-        letter-spacing: 0;
-    }}
-    .type-badge {{
-        text-align: center;
-        font-size: 9pt;
-        font-weight: bold;
-        color: #ffffff;
-        background-color: #0f172a;
-        padding: 4px 0;
-        margin-bottom: 12px;
-    }}
-    .meta-table {{
-        width: 100%;
-        margin-bottom: 12px;
-        border-bottom: 1px dashed #94a3b8;
-    }}
-    .meta-table td {{
-        font-size: 9pt;
-        padding: 2px 0 6px 0;
-    }}
-    .customer-box {{
-        background-color: #f8fafc;
-        padding: 8px;
-        margin-bottom: 12px;
-        font-size: 9pt;
-    }}
-    table.items {{
-        width: 100%;
-        border-collapse: collapse;
-        margin: 6px 0;
-    }}
-    table.items thead {{
-        display: table-header-group;
-    }}
-    table.items th {{
-        background-color: #0f172a;
-        color: #ffffff;
-        padding: 5px 4px;
-        font-size: 8pt;
-        text-align: left;
-        border: 1px solid #0f172a;
-    }}
-    table.items td {{
-        border-bottom: 1px solid #cbd5e1;
-        padding: 5px 4px;
-        font-size: 9pt;
-        vertical-align: top;
-    }}
-    table.items tr {{
-        break-inside: avoid;
-        page-break-inside: avoid;
-    }}
-    table.items td.num {{
-        text-align: right;
-    }}
-    .item-warranty-text {{
-        color: #6b7280;
-        font-style: italic;
-        font-size: 8pt;
-    }}
-    .totals-table {{
-        width: 50%;
-        margin-left: 50%;
-        margin-top: 8px;
-        font-size: 10pt;
-    }}
-    .totals-table td {{
-        padding: 3px 0;
-        font-size: 10pt;
-    }}
-    .totals-table tr.totals-sub td {{
-        color: #334155;
-    }}
-    .totals-table tr.totals-grand td {{
-        padding: 6px 0;
-        border-top: 2px solid #0f172a;
-        border-bottom: 2px solid #0f172a;
-        font-weight: bold;
-        font-size: 12pt;
-    }}
-    .customer-box,
-    .totals-table {{
-        break-inside: avoid;
-        page-break-inside: avoid;
-    }}
-    .policy-page {{
-        page-break-before: always;
-        break-before: page;
-    }}
-    .policy-title {{
-        font-size: 12pt;
-        font-weight: bold;
-        text-align: center;
-        margin: 0 0 10px 0;
-        color: #0f172a;
-    }}
-    .policy-columns {{
-        column-count: 2;
-        column-gap: 22px;
-    }}
-    .policy-section {{
-        break-inside: avoid;
-        page-break-inside: avoid;
-        margin: 0 0 9px 0;
-    }}
-    .policy-heading {{
-        font-size: 9pt;
-        font-weight: bold;
-        color: #0f172a;
-        margin: 0 0 3px 0;
-    }}
-    .policy-section ul {{
-        margin: 0;
-        padding-left: 14px;
-    }}
-    .policy-section li {{
-        font-size: 7.8pt;
-        line-height: 1.35;
-        margin-bottom: 2px;
-        color: #1f2937;
-    }}
-</style>
-</head>
-<body>
-
-<div class="receipt-title">SALES RECEIPT</div>
-<div class="type-badge">{type_badge}</div>
-
-<table class="meta-table">
-    <tr>
-        <td><strong>Receipt No:</strong> {self.escape(inv_no)}</td>
-        <td align="right"><strong>Date:</strong> {self.escape(date_str)}</td>
-    </tr>
-</table>
-
-<div class="customer-box">
-    <strong>Bill To:</strong><br/>
-    {self.escape(cust)}<br/>
-    {('Phone: ' + self.escape(phone) + '<br/>') if phone else ''}
-    {('Email: ' + self.escape(email)) if email else ''}
-</div>
-
-<table class="items">
-    <thead>
-        <tr>{header_cells}</tr>
-    </thead>
-    <tbody>
-        {rows_html}
-    </tbody>
-</table>
-
-<table class="totals-table">{totals_rows}
-    <tr class="totals-grand">
-        <td>TOTAL</td>
-        <td align="right">Rs. {total:,.2f}</td>
-    </tr>
-</table>
-
-{self.warranty_policy_html()}
-
-</body>
-</html>"""
-
-    @staticmethod
-    def escape(text):
-        return (
-            str(text)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-        )
-
-    @staticmethod
-    def warranty_policy_html():
-        # Second page printed on every receipt. Plain string (not an f-string),
-        # so literal braces are not an issue and ampersands are written as &amp;.
-        return """
-<div class="policy-page">
-    <div class="policy-title">🛡️ Chawla Tech — Warranty &amp; Returns Policy (Key Points)</div>
-    <div class="policy-columns">
-        <div class="policy-section">
-            <div class="policy-heading">📦 Returns &amp; Exchanges</div>
-            <ul>
-                <li><strong>Unopened / Sealed items:</strong> Returnable within 7 days for a full refund or exchange — original seal must be completely intact. Buyer pays return shipping.</li>
-                <li><strong>Once opened:</strong> Change-of-mind return is no longer valid, even if the item was never powered on.</li>
-                <li><strong>Opened / Used items with a defect:</strong> Eligible for return or replacement within 7 days, after in-store testing confirms the fault. Buyer pays return shipping.</li>
-            </ul>
-        </div>
-        <div class="policy-section">
-            <div class="policy-heading">📹 Video Proof Requirement (Important)</div>
-            <ul>
-                <li>For any return or exchange claim involving a wrong, defective, broken, missing, or faulty item (or any missing/faulty part), a video proof is mandatory.</li>
-                <li>The video must include the unboxing of the item from the moment the parcel/box is opened. Claims without this video proof will not be accepted.</li>
-            </ul>
-        </div>
-        <div class="policy-section">
-            <div class="policy-heading">🔧 What's Covered</div>
-            <ul>
-                <li>Manufacturing/material defects discovered under normal use within 7 days.</li>
-                <li>Some products have an extended manufacturer warranty (e.g., 6 months, 1 year) — check the product listing.</li>
-                <li>Chinese-imported/grey-market items: 7-day Chawla Tech warranty only — no brand warranty.</li>
-            </ul>
-        </div>
-        <div class="policy-section">
-            <div class="policy-heading">❌ What's NOT Covered (Warranty Void)</div>
-            <ul>
-                <li>Electrical damage from power surges, over-voltage, load-shedding, or wrong PSU</li>
-                <li>Physical damage (drops, broken pins, cracked screens, bent parts)</li>
-                <li>ESD (static electricity) damage</li>
-                <li>Liquid, fire, heat, or environmental damage</li>
-                <li>Damage from incorrect installation or incompatible parts</li>
-                <li>Unauthorized modifications, overclocking, or BIOS/firmware flashing</li>
-                <li>Pest damage (insects, lizards, rodents)</li>
-                <li>Tampered, removed, or defaced serial numbers/warranty seals</li>
-                <li>Continued use after a fault appeared</li>
-                <li>Software issues, data loss, viruses</li>
-            </ul>
-        </div>
-        <div class="policy-section">
-            <div class="policy-heading">🚫 No Returns At All (Ever)</div>
-            <ul>
-                <li>Digital products &amp; license keys — zero exceptions, no matter what</li>
-                <li>Opened hygiene items (earphones, screen protectors)</li>
-                <li>Clearance / As-Is items</li>
-                <li>Used single-use consumables (thermal paste, cleaning wipes, applied stickers/skins)</li>
-            </ul>
-        </div>
-        <div class="policy-section">
-            <div class="policy-heading">💸 Refunds</div>
-            <ul>
-                <li>Cash refunds are processed physically; online refunds within 5–7 business days.</li>
-                <li>Items sold at a discount will be refunded the discounted price only.</li>
-            </ul>
-        </div>
-        <div class="policy-section">
-            <div class="policy-heading">📋 To Make a Claim, You Need</div>
-            <ul>
-                <li>Proof of purchase (receipt, invoice, or registered mobile/email)</li>
-                <li>Video proof including unboxing (for wrong/defective/broken/missing/faulty items)</li>
-                <li>Item returned within the applicable window</li>
-            </ul>
-        </div>
-        <div class="policy-section">
-            <div class="policy-heading">📞 Contact</div>
-            <ul>
-                <li><strong>WhatsApp/Phone:</strong> +92 339 282 5523 (Mon–Thu &amp; Sat, 10am–8pm; Fri, 10am-12pm &amp; 3pm-8pm)</li>
-                <li><strong>Email:</strong> support@chawlatech.pk (reply within 24 hours)</li>
-                <li><strong>In-store:</strong> Karachi — bring the item and receipt</li>
-            </ul>
-        </div>
-    </div>
-</div>"""
-
 def run_smoke_test():
-    app = ReceiptApp.__new__(ReceiptApp)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")
-    html_content = app.build_html(
+    html_content = receipt_render.build_html(
         "INV-W0000",
         date.today().strftime(DATE_DISPLAY_FORMAT),
         "Smoke Test Customer",
@@ -1562,7 +910,7 @@ def run_smoke_test():
         "Online",
         1.0,
     )
-    app.render_pdf(html_content, pdf_path)
+    receipt_service.render_pdf(html_content, pdf_path)
 
 # ------------------- run -------------------
 if __name__ == "__main__":

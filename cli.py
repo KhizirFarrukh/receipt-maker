@@ -74,15 +74,14 @@ def normalize_html(html):
 
 
 def render_html_from_data(data, *, freeze_date=None, invoice_number=None, normalize=True):
-    """Render receipt HTML exactly as the GUI would, without a Tk window.
+    """Render receipt HTML from data, without tkinter or Playwright.
 
-    build_html only references @staticmethods, so bypassing __init__ gives a
-    state-free instance on which the real method runs unchanged.
+    Uses the tk-free receipt_render.build_html (extracted from ReceiptApp in
+    Stage 1). This is the golden-diff target.
     """
-    import main
-    app = object.__new__(main.ReceiptApp)  # no __init__: headless, state-free
+    import receipt_render
     a = _to_build_html_args(data, freeze_date=freeze_date, invoice_number=invoice_number)
-    html = app.build_html(
+    html = receipt_render.build_html(
         a["inv_no"], a["date_str"], a["cust"], a["phone"], a["email"],
         a["items"], a["receipt_type"], a["shipping"],
     )
