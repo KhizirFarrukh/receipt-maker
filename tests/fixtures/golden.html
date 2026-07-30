@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<base href="{{RESOURCE_BASE}}">
+<style>
+    @page {
+        size: A4;
+    }
+    html, body {
+        margin: 0;
+        padding: 0;
+    }
+    body {
+        font-family: Helvetica, Arial, sans-serif;
+        font-size: 10pt;
+        color: #111;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    .receipt-title {
+        font-size: 14pt;
+        font-weight: bold;
+        text-align: center;
+        margin: 0 0 4px 0;
+        letter-spacing: 0;
+    }
+    .type-badge {
+        text-align: center;
+        font-size: 9pt;
+        font-weight: bold;
+        color: #ffffff;
+        background-color: #0f172a;
+        padding: 4px 0;
+        margin-bottom: 12px;
+    }
+    .meta-table {
+        width: 100%;
+        margin-bottom: 12px;
+        border-bottom: 1px dashed #94a3b8;
+    }
+    .meta-table td {
+        font-size: 9pt;
+        padding: 2px 0 6px 0;
+    }
+    .customer-box {
+        background-color: #f8fafc;
+        padding: 8px;
+        margin-bottom: 12px;
+        font-size: 9pt;
+    }
+    table.items {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 6px 0;
+    }
+    table.items thead {
+        display: table-header-group;
+    }
+    table.items th {
+        background-color: #0f172a;
+        color: #ffffff;
+        padding: 5px 4px;
+        font-size: 8pt;
+        text-align: left;
+        border: 1px solid #0f172a;
+    }
+    table.items td {
+        border-bottom: 1px solid #cbd5e1;
+        padding: 5px 4px;
+        font-size: 9pt;
+        vertical-align: top;
+    }
+    table.items tr {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    table.items td.num {
+        text-align: right;
+    }
+    .item-warranty-text {
+        color: #6b7280;
+        font-style: italic;
+        font-size: 8pt;
+    }
+    .totals-table {
+        width: 50%;
+        margin-left: 50%;
+        margin-top: 8px;
+        font-size: 10pt;
+    }
+    .totals-table td {
+        padding: 3px 0;
+        font-size: 10pt;
+    }
+    .totals-table tr.totals-sub td {
+        color: #334155;
+    }
+    .totals-table tr.totals-grand td {
+        padding: 6px 0;
+        border-top: 2px solid #0f172a;
+        border-bottom: 2px solid #0f172a;
+        font-weight: bold;
+        font-size: 12pt;
+    }
+    .customer-box,
+    .totals-table {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    .policy-page {
+        page-break-before: always;
+        break-before: page;
+    }
+    .policy-title {
+        font-size: 12pt;
+        font-weight: bold;
+        text-align: center;
+        margin: 0 0 10px 0;
+        color: #0f172a;
+    }
+    .policy-columns {
+        column-count: 2;
+        column-gap: 22px;
+    }
+    .policy-section {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        margin: 0 0 9px 0;
+    }
+    .policy-heading {
+        font-size: 9pt;
+        font-weight: bold;
+        color: #0f172a;
+        margin: 0 0 3px 0;
+    }
+    .policy-section ul {
+        margin: 0;
+        padding-left: 14px;
+    }
+    .policy-section li {
+        font-size: 7.8pt;
+        line-height: 1.35;
+        margin-bottom: 2px;
+        color: #1f2937;
+    }
+</style>
+</head>
+<body>
+
+<div class="receipt-title">SALES RECEIPT</div>
+<div class="type-badge">ONLINE ORDER</div>
+
+<table class="meta-table">
+    <tr>
+        <td><strong>Receipt No:</strong> INV-W1001</td>
+        <td align="right"><strong>Date:</strong> 15 Jan 2026</td>
+    </tr>
+</table>
+
+<div class="customer-box">
+    <strong>Bill To:</strong><br/>
+    Ada Lovelace<br/>
+    Phone: +92 300 1234567<br/>
+    Email: ada@example.com
+</div>
+
+<table class="items">
+    <thead>
+        <tr><th>SKU</th><th>Item Description</th><th>Serial Number</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th>Tax</th><th>Amount</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>KB-87</td><td>Mechanical Keyboard (87-key)<br/><span class="item-warranty-text">12 Months Limited Warranty</span></td><td>SN-AAA-001</td><td class="num">2</td><td class="num">Rs. 8500.00</td><td class="num">Rs. 500.00</td><td class="num">Rs. 1200.00</td><td class="num">Rs. 17000.00</td></tr><tr><td>-</td><td>USB-C Braided Cable 2m<br/><span class="item-warranty-text">7 Days Checking Warranty</span></td><td>-</td><td class="num">3</td><td class="num">Rs. 750.00</td><td class="num">-</td><td class="num">-</td><td class="num">Rs. 2250.00</td></tr><tr><td>LS-01</td><td>Aluminium Laptop Stand</td><td>SN-LS-042</td><td class="num">1</td><td class="num">Rs. 3200.00</td><td class="num">-</td><td class="num">-</td><td class="num">Rs. 3200.00</td></tr>
+    </tbody>
+</table>
+
+<table class="totals-table"><tr class="totals-sub"><td>Subtotal</td><td align="right">Rs. 22,450.00</td></tr><tr class="totals-sub"><td>Taxes</td><td align="right">Rs. 1,200.00</td></tr><tr class="totals-sub"><td>Discounts</td><td align="right">- Rs. 500.00</td></tr><tr class="totals-sub"><td>Shipping Fees</td><td align="right">Rs. 500.00</td></tr>
+    <tr class="totals-grand">
+        <td>TOTAL</td>
+        <td align="right">Rs. 23,650.00</td>
+    </tr>
+</table>
+
+
+<div class="policy-page">
+    <div class="policy-title">🛡️ Chawla Tech — Warranty &amp; Returns Policy (Key Points)</div>
+    <div class="policy-columns">
+        <div class="policy-section">
+            <div class="policy-heading">📦 Returns &amp; Exchanges</div>
+            <ul>
+                <li><strong>Unopened / Sealed items:</strong> Returnable within 7 days for a full refund or exchange — original seal must be completely intact. Buyer pays return shipping.</li>
+                <li><strong>Once opened:</strong> Change-of-mind return is no longer valid, even if the item was never powered on.</li>
+                <li><strong>Opened / Used items with a defect:</strong> Eligible for return or replacement within 7 days, after in-store testing confirms the fault. Buyer pays return shipping.</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">📹 Video Proof Requirement (Important)</div>
+            <ul>
+                <li>For any return or exchange claim involving a wrong, defective, broken, missing, or faulty item (or any missing/faulty part), a video proof is mandatory.</li>
+                <li>The video must include the unboxing of the item from the moment the parcel/box is opened. Claims without this video proof will not be accepted.</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">🔧 What's Covered</div>
+            <ul>
+                <li>Manufacturing/material defects discovered under normal use within 7 days.</li>
+                <li>Some products have an extended manufacturer warranty (e.g., 6 months, 1 year) — check the product listing.</li>
+                <li>Chinese-imported/grey-market items: 7-day Chawla Tech warranty only — no brand warranty.</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">❌ What's NOT Covered (Warranty Void)</div>
+            <ul>
+                <li>Electrical damage from power surges, over-voltage, load-shedding, or wrong PSU</li>
+                <li>Physical damage (drops, broken pins, cracked screens, bent parts)</li>
+                <li>ESD (static electricity) damage</li>
+                <li>Liquid, fire, heat, or environmental damage</li>
+                <li>Damage from incorrect installation or incompatible parts</li>
+                <li>Unauthorized modifications, overclocking, or BIOS/firmware flashing</li>
+                <li>Pest damage (insects, lizards, rodents)</li>
+                <li>Tampered, removed, or defaced serial numbers/warranty seals</li>
+                <li>Continued use after a fault appeared</li>
+                <li>Software issues, data loss, viruses</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">🚫 No Returns At All (Ever)</div>
+            <ul>
+                <li>Digital products &amp; license keys — zero exceptions, no matter what</li>
+                <li>Opened hygiene items (earphones, screen protectors)</li>
+                <li>Clearance / As-Is items</li>
+                <li>Used single-use consumables (thermal paste, cleaning wipes, applied stickers/skins)</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">💸 Refunds</div>
+            <ul>
+                <li>Cash refunds are processed physically; online refunds within 5–7 business days.</li>
+                <li>Items sold at a discount will be refunded the discounted price only.</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">📋 To Make a Claim, You Need</div>
+            <ul>
+                <li>Proof of purchase (receipt, invoice, or registered mobile/email)</li>
+                <li>Video proof including unboxing (for wrong/defective/broken/missing/faulty items)</li>
+                <li>Item returned within the applicable window</li>
+            </ul>
+        </div>
+        <div class="policy-section">
+            <div class="policy-heading">📞 Contact</div>
+            <ul>
+                <li><strong>WhatsApp/Phone:</strong> +92 339 282 5523 (Mon–Thu &amp; Sat, 10am–8pm; Fri, 10am-12pm &amp; 3pm-8pm)</li>
+                <li><strong>Email:</strong> support@chawlatech.pk (reply within 24 hours)</li>
+                <li><strong>In-store:</strong> Karachi — bring the item and receipt</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,44 @@
+{
+  "data_version": 1,
+  "receipt_type": "Online",
+  "invoice_no": "INV-W1001",
+  "date": "15 Jan 2026",
+  "customer": {
+    "name": "Ada Lovelace",
+    "phone": "+92 300 1234567",
+    "email": "ada@example.com"
+  },
+  "shipping": "500.00",
+  "items": [
+    {
+      "sku": "KB-87",
+      "desc": "Mechanical Keyboard (87-key)",
+      "serial": "SN-AAA-001",
+      "qty": 2,
+      "unit_price": "8500.00",
+      "discount": "500.00",
+      "tax": "1200.00",
+      "warranty": "12 Months Limited Warranty"
+    },
+    {
+      "sku": "",
+      "desc": "USB-C Braided Cable 2m",
+      "serial": "",
+      "qty": 3,
+      "unit_price": "750.00",
+      "discount": "0.00",
+      "tax": "0.00",
+      "warranty": "7 Days Checking Warranty"
+    },
+    {
+      "sku": "LS-01",
+      "desc": "Aluminium Laptop Stand",
+      "serial": "SN-LS-042",
+      "qty": 1,
+      "unit_price": "3200.00",
+      "discount": "0.00",
+      "tax": "0.00",
+      "warranty": "No Warranty"
+    }
+  ]
+}
