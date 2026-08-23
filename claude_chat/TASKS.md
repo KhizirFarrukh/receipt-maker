@@ -211,16 +211,25 @@ unit tests instead. The golden's job is catching regressions, not advertising de
   checks used a throwaway key in a temp directory precisely so key creation stays the owner's.
   Set `signing.signer_name` in `appsettings.json` *before* running it.
 
-## Open items for Stage 3+
+## Open items for Stage 4+
 
-- Store-specific copy still lives in `Templates/terms.html` and `Templates/footer.html`, and
-  `Rs. ` / `SALES RECEIPT` / `ONLINE ORDER` are still produced by `receipt_render.py`. All of it
-  is Stage 3 (currency, `strings.json`, `receipt_types`, editable terms). Stage 3 **will**
-  legitimately change the golden — regenerate it deliberately then.
+- **Invoice numbering is still filename-derived.** Stage 4, and the plan is explicit that it is
+  the riskiest correctness change and must be done alone with its own gate: atomic counter file
+  seeded from the current max, filename scanning demoted to a reconciliation warning, O_EXCL
+  single-instance guard.
+- Store-specific copy still lives in `Templates/terms.html` and `Templates/footer.html` (Chawla
+  Tech wording, chawlatech.pk links). These are now plain editable templates, so this is a
+  content edit rather than a code change — but shipping them as the neutral default is still
+  outstanding.
+- `SALES RECEIPT`, `Receipt No:`, `Bill To:` etc. are literals inside `receipt_info.html`. That
+  satisfies "no user-visible strings in Python" and they are user-editable, but a `document.title`
+  config key was never added.
+- `NO_WARRANTY_LABEL` is a sentinel shared between `receipt_render` and the GUI's warranty
+  dropdown. Stage 5's configurable warranty options replace both.
 - No OFL font is bundled (C5); the mechanism is ready and off by default.
-- `format_date` and `--preview` are not implemented; both only become meaningful in Stage 3.
-- Invoice numbering is still filename-derived. That is Stage 4, and the plan is explicit that it
-  is the riskiest correctness change and must be done alone with its own gate.
+- `--preview` is still not implemented.
+- Per-line tax *rates* remain out of scope by design — the per-line `tax` column is an amount,
+  and v1 tax is document-level (plan backlog item 7).
 
 ## Notes / decisions log
 

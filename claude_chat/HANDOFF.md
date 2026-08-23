@@ -2,11 +2,12 @@
 
 **Purpose of this file:** a complete context dump so that if this chat is lost, a fresh AI agent
 can read this document (+ [`PLAN-generalization.md`](PLAN-generalization.md) in the same folder) and
-continue the work exactly where it was left off — currently: **Stage 2 is done; Stage 3 is next.**
+continue the work exactly where it was left off — currently: **Stages 2 and 3 are done; Stage 4
+is next.**
 
 **Read order for a new agent:** (1) this file top-to-bottom, (2) `PLAN-generalization.md` (the full
 approved plan / roadmap), (3) [`TASKS.md`](TASKS.md) (what the 2026-08-22/23 session did, and the
-open items it left), (4) the test suite, (5) then start Stage 3.
+open items it left), (4) the test suite, (5) then start Stage 4.
 
 Last updated: 2026-08-23.
 
@@ -38,10 +39,25 @@ a rewritten config layer with `schema_version`/`migrate`/`validate`/atomic write
 template-driven `receipt_render.py`, and `cli.py --check` / a real `--config-dir`. Tests went
 **11 → 124**. `appsettings.json` is now schema 2.
 
-**Next:** Stage 3 (currency, date_format, receipt_types, strings.json, tax, editable terms page).
-Note that Stage 3 **will** legitimately change the golden — it is the stage that replaces the
-hardcoded `Rs. `, `SALES RECEIPT`, `ONLINE ORDER` and the Chawla Tech terms copy with config.
-Regenerate the golden then, deliberately.
+**Stage 3 is also complete, and the golden did NOT have to move.** Currency, `date_format`,
+`receipt_types`, `tax` (inclusive/exclusive), `terms_page.enabled` and `strings.json` all landed
+with the golden still byte-identical and the generated PDF unchanged byte for byte. That was a
+deliberate choice: `tests/fixtures/env/` pins a config reproducing the pre-Stage-3 output, so the
+golden stays a real regression detector through the configuration work, while the knobs
+themselves are covered by unit tests. Config schema is now **3**; migration seeds an existing
+install with `Rs.`/2dp/ungrouped line amounts so nobody's receipts changed. Tests: **181**.
+
+**Gate hygiene a new agent must not undo** (both were live traps, see TASKS.md Phase E):
+`tests/gate_env.py` clears the fixture's seeded `Templates/` on entry — without it, edits to the
+repository's templates stop reaching the tests and the golden validates a stale layout. And
+`.gitignore` carries negations for `tests/fixtures/env/`, because the generic `ENV/` virtualenv
+rule matches it and would otherwise keep the whole fixture out of the repository.
+
+**Next: Stage 4** — the invoice counter migration. The plan is emphatic that this is the riskiest
+correctness change and gets its own isolated gate: an atomic counter file seeded from the current
+max, filename scanning demoted to a reconciliation warning, and an O_EXCL/single-instance guard.
+Numbering is still filename-derived today. Note Stage 5 (custom fields) will finally remove the
+`NO_WARRANTY_LABEL` sentinel that `receipt_render` and the GUI currently share.
 
 ---
 
