@@ -13,8 +13,10 @@ A Python tkinter desktop app for generating A4 PDF sales receipts.
 - PDF generation through Playwright/Chromium.
 - Every receipt is digitally signed (PAdES) with your private key, so a forged or edited receipt fails verification against your public certificate. See [Receipt Authenticity](#receipt-authenticity-digital-signatures).
 - A second page with the Warranty & Returns Policy is appended to every receipt.
-- `header.html` and `footer.html` are rendered as real PDF page headers and footers on every page.
+- `Templates/header.html` and `Templates/footer.html` are rendered as real PDF page headers and footers on every page.
 - The receipt body is laid out inside the reserved PDF content area, so it does not overlap the header or footer.
+- The whole receipt layout lives in editable templates under `Templates/` — edit the HTML/CSS and the next receipt changes, with no rebuild. See [Templates](#templates).
+- Amounts are computed in decimal (never binary floating point), with each line rounded and the rounded lines summed, so the printed figures add up.
 
 ## Requirements
 
@@ -121,15 +123,19 @@ are already signed are skipped.
   "private_key_path": "signing/private_key.pem",
   "certificate_path": "signing/certificate.pem",
   "key_passphrase": "",
-  "signer_name": "Chawla Tech",
+  "signer_name": "Your Company",
   "reason": "Receipt authenticity",
-  "location": "chawlatech.pk",
+  "location": "",
   "tsa_url": ""
 }
 ```
 
 - `enabled` — set to `false` to generate unsigned receipts (legacy behavior).
 - `key_passphrase` — only needed if you created the key with `--passphrase`.
+- `signer_name` — also becomes the organization on the certificate `keygen.py` creates.
+  Set it **before** running `keygen.py`, or pass `--org-name` explicitly; the certificate
+  subject is what a verifier displays as the receipt's issuer, and changing it later means
+  issuing a new certificate.
 - `tsa_url` — optional RFC 3161 timestamp-authority URL for a trusted signing time
   (PAdES-T). Leave empty to use the receipt's own date.
 
@@ -176,6 +182,12 @@ Distribute the whole `dist/ReceiptGenerator` folder, not only the executable. It
 
 `appsettings.json` and `filename_config.json` sit beside the executable so users can edit business details and filename options after packaging. Generated PDFs are written to the `invoices` folder beside the executable.
 
+`Templates/` is created beside the executable the first time the app runs, seeded from the
+read-only copies inside `_internal`. Edit those files to change the receipt layout of a packaged
+install — no rebuild needed. If the app is replacing an older install that had `header.html` /
+`footer.html` sitting loose beside the exe, those edited files are carried into `Templates/`
+rather than being replaced by the defaults.
+
 The build does **not** include your signing key — the `signing/` folder is created beside the executable when you run `keygen.py`. Keep it on your own machine and do not copy it into any `dist/` folder you share, so your private key is never distributed.
 
 ## Business Settings
@@ -193,6 +205,20 @@ Edit `appsettings.json` to change the business details shown in the receipt head
   }
 }
 ```
+
+`appsettings.json` also carries:
+
+- `schema_version` — managed by the app. An older file is upgraded automatically on first run,
+  keeping a timestamped `.bak` beside it. A file written by a *newer* version is refused with a
+  clear message rather than being silently downgraded.
+- `document` — PDF page margins. `margin_top` / `margin_bottom` must reserve room for the page
+  header and footer, or Chromium clips them.
+- `render` — `block_external_requests` (default `true`; receipts render offline and cannot fetch
+  from a CDN), `timeout_ms`, `fail_on_missing_image`.
+- `fonts` — see [Fonts](#fonts).
+
+Settings are validated at startup. A bad value is reported with the exact file and key instead of
+failing halfway through a receipt; `python cli.py --check` runs the same validation on demand.
 
 `logo_path` can be:
 
@@ -230,12 +256,62 @@ That creates names like:
 INV-W1001-06 May 2026-Walk-in Customer-000-000-0000.pdf
 ```
 
-## Branding
+## Templates
 
-Edit `header.html` and `footer.html` to change the repeating PDF header and footer layout. Business placeholders are filled from `appsettings.json`:
+The receipt layout lives in editable HTML/CSS files under `Templates/`, rendered by a small
+placeholder engine. In a packaged install the folder is created beside the executable the first
+time you run the app; edit those files and the next receipt reflects the change — no rebuild.
 
-- `{{company_name}}`
-- `{{company_address}}`
-- `{{company_phone}}`
-- `{{company_email}}`
-- `{{company_logo}}`
+| File | What it controls |
+|---|---|
+| `styles.css` | All receipt styling |
+| `base.html` | The document skeleton that pulls the blocks together |
+| `receipt_info.html` | Title, type badge, receipt number/date, "Bill To" box |
+| `items_table.html` | The line-item table shell |
+| `item_header_cell.html` / `item_row_cell.html` | One column heading / one cell |
+| `totals.html` / `totals_row.html` | Totals block and one breakdown row |
+| `terms.html` | The Warranty & Returns page printed after the receipt |
+| `header.html` / `footer.html` | The repeating PDF page header and footer |
+
+### Template syntax
+
+Three constructs, deliberately no more — no loops, no expressions, no arbitrary code:
+
+- `{{key}}` — insert a value, escaped for HTML
+- `{{key|raw}}` — insert without escaping (reserved for fragments the app builds)
+- `{{#if key}}…{{/if}}` — include the block only when `key` has a value
+
+Business placeholders in `header.html` / `footer.html` come from `appsettings.json`:
+`{{company_name}}`, `{{company_address}}`, `{{company_phone}}`, `{{company_email}}`,
+`{{company_logo}}`.
+
+Templates are checked when the app starts. A misspelt placeholder or an unclosed `{{#if}}` is
+reported with the file and line rather than silently leaving a blank space on a receipt. To check
+without launching the GUI:
+
+```bash
+python cli.py --check
+```
+
+### Upgrading
+
+`Templates/.installed.json` records each file's hash at the moment it was copied. That is how a
+future version can tell a file you edited from one you never touched — your edits are never
+silently overwritten. Deleting a template restores it from the bundled copy on the next run.
+
+### Fonts
+
+By default the receipt uses Helvetica/Arial, so a system font substitution can make the same
+receipt look slightly different on another machine. To pin it, put an OFL-licensed font under
+`Templates/fonts/` and name it in `appsettings.json`:
+
+```json
+"fonts": {
+  "family": "Inter",
+  "files": ["Templates/fonts/Inter-Regular.woff2"],
+  "fallback": "Helvetica, Arial, sans-serif"
+}
+```
+
+The font is embedded in the PDF as base64, so rendering still works offline. No font ships with
+the app; leave `family` empty to keep the current behaviour.

@@ -1,3 +1,7 @@
 playwright>=1.44.0
 pyhanko>=0.25.0
 cryptography>=42.0.0
+# Windows ships no IANA time-zone database, so zoneinfo (used via pyhanko's
+# tzlocal) has nothing to read without this. Currently arrives as a transitive
+# dependency; pinned explicitly so a dependency change cannot silently drop it.
+tzdata>=2024.1

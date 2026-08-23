@@ -2,12 +2,46 @@
 
 **Purpose of this file:** a complete context dump so that if this chat is lost, a fresh AI agent
 can read this document (+ [`PLAN-generalization.md`](PLAN-generalization.md) in the same folder) and
-continue the work exactly where it was left off — currently: **Stage 1 is done; Stage 2 is next.**
+continue the work exactly where it was left off — currently: **Stage 2 is done; Stage 3 is next.**
 
 **Read order for a new agent:** (1) this file top-to-bottom, (2) `PLAN-generalization.md` (the full
-approved plan / roadmap), (3) `tests/test_stage0.py` (the safety-net tests), (4) then start Stage 2.
+approved plan / roadmap), (3) [`TASKS.md`](TASKS.md) (what the 2026-08-22/23 session did, and the
+open items it left), (4) the test suite, (5) then start Stage 3.
 
-Last updated: 2026-07-31.
+Last updated: 2026-08-23.
+
+---
+
+## 0. UPDATE 2026-08-23 — read this before the older sections
+
+A later session ran on a **different machine** and completed Stage 2. Several statements below are
+now stale; this section wins where they conflict. Full detail in [`TASKS.md`](TASKS.md).
+
+**Environment (supersedes §1 "Environment gotchas"):**
+- Machine is now `C:\Users\Khizi\...`, **not** `C:\Users\Chichum\...`.
+- Python was **not installed at all**; Python **3.12.10** is now at
+  `%LOCALAPPDATA%\Programs\Python\Python312\python.exe` (the `py` launcher is not on PATH).
+- Playwright **1.62.0** + Chromium 151, pyhanko 0.36.2, cryptography 50.0.0, pyinstaller 6.22.2
+  are installed. **The old note that "you cannot render a real PDF here" no longer applies** —
+  real PDFs, the full sign/verify round-trip, and the packaged `.exe` build all work and were
+  verified end to end.
+- Auto-commit is **not** running in this session; the working tree is left uncommitted on purpose.
+
+**The bug that had been silently breaking the gate:** the repo had no `.gitattributes`, so Git's
+Windows default (`core.autocrlf=true`) rewrote the LF-committed `tests/fixtures/golden.html` to
+CRLF on checkout while the renderer emits LF — so `test_regression_matches_golden` failed on
+**every fresh Windows clone**. Fixed with a `.gitattributes`. Do not remove it.
+
+**Stage 2 is complete and the golden is still byte-identical.** New: `template_engine.py`,
+`Templates/` (the receipt layout, incl. `header.html`/`footer.html` — the root copies are gone),
+a rewritten config layer with `schema_version`/`migrate`/`validate`/atomic writes, a
+template-driven `receipt_render.py`, and `cli.py --check` / a real `--config-dir`. Tests went
+**11 → 124**. `appsettings.json` is now schema 2.
+
+**Next:** Stage 3 (currency, date_format, receipt_types, strings.json, tax, editable terms page).
+Note that Stage 3 **will** legitimately change the golden — it is the stage that replaces the
+hardcoded `Rs. `, `SALES RECEIPT`, `ONLINE ORDER` and the Chawla Tech terms copy with config.
+Regenerate the golden then, deliberately.
 
 ---
 

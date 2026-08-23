@@ -889,33 +889,48 @@ class ReceiptApp:
         self.status_label.config(text=f"Signed {signed}, skipped {skipped}, failed {len(failed)}")
 
 def run_smoke_test():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")
-    html_content = receipt_render.build_html(
-        "INV-W0000",
-        date.today().strftime(DATE_DISPLAY_FORMAT),
-        "Smoke Test Customer",
-        "000-000-0000",
-        "smoke@example.com",
-        [{
-            "sku": "TEST",
-            "desc": "Packaged executable smoke test item",
-            "serial": "-",
-            "qty": 2,
-            "price": 1.0,
-            "discount": 0.5,
-            "tax": 0.2,
-            "warranty": "No Warranty",
-        }],
-        "Online",
-        1.0,
-    )
-    receipt_service.render_pdf(html_content, pdf_path)
+    """Render one PDF headlessly to prove a packaged build works. Returns an exit code.
+
+    Deliberately never raises. The packaged exe is built windowed
+    (console=False), where an escaping exception is shown as a modal traceback
+    dialog -- which would block the build script's wait indefinitely and, with no
+    console attached, report nothing. Failures go to the log and the exit code.
+    """
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")
+        html_content = receipt_render.build_html(
+            "INV-W0000",
+            date.today().strftime(DATE_DISPLAY_FORMAT),
+            "Smoke Test Customer",
+            "000-000-0000",
+            "smoke@example.com",
+            [{
+                "sku": "TEST",
+                "desc": "Packaged executable smoke test item",
+                "serial": "-",
+                "qty": 2,
+                "price": 1.0,
+                "discount": 0.5,
+                "tax": 0.2,
+                "warranty": "No Warranty",
+            }],
+            "Online",
+            1.0,
+        )
+        receipt_service.render_pdf(html_content, pdf_path)
+    except Exception:
+        detail = traceback.format_exc()
+        logger.error("Packaged smoke test failed\n%s", detail)
+        if sys.stderr is not None:      # None in a windowed (console=False) build
+            sys.stderr.write(detail)
+        return 1
+    return 0
 
 # ------------------- run -------------------
 if __name__ == "__main__":
     if "--smoke-test" in sys.argv:
-        run_smoke_test()
+        raise SystemExit(run_smoke_test())
     else:
         ReceiptApp.enable_dpi_awareness()
         root = tk.Tk()

@@ -16,8 +16,10 @@ python -m PyInstaller --clean --noconfirm receipt_maker.spec
 
 DIST_DIR="dist/ReceiptGenerator"
 
-cp filename_config.json "$DIST_DIR/"
-cp appsettings.json "$DIST_DIR/"
+# Templates are NOT copied here on purpose -- the app seeds $DIST_DIR/Templates
+# from the bundled copies on first run and records their hashes at that moment,
+# which is what later tells a user's edit apart from an untouched default.
+cp filename_config.json appsettings.json "$DIST_DIR/"
 
 mkdir -p "$DIST_DIR/invoices"
 
@@ -37,7 +39,12 @@ EOF
 
 SMOKE_PDF="$DIST_DIR/invoices/_packaged_smoke_test.pdf"
 rm -f "$SMOKE_PDF"
-"$DIST_DIR/ReceiptGenerator" --smoke-test
+# Bounded, so a build can never wedge on a hung packaged binary.
+if ! timeout 180 "$DIST_DIR/ReceiptGenerator" --smoke-test; then
+    echo "ERROR: Packaged executable smoke test failed or timed out." >&2
+    tail -n 30 "$DIST_DIR/logs/receipt-maker.log" 2>/dev/null || true
+    exit 1
+fi
 if [ ! -f "$SMOKE_PDF" ]; then
     echo "ERROR: Packaged executable smoke test did not create a PDF." >&2
     exit 1

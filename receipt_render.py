@@ -1,23 +1,50 @@
-"""Receipt HTML construction and page header/footer templates (tkinter-free).
+"""Receipt HTML construction from Templates/ (tkinter-free).
 
-Extracted verbatim from ReceiptApp in Stage 1 (instance methods -> module
-functions; none used widget state). Behaviour is unchanged -- the Stage 0 golden
-test guards build_html's output byte-for-byte. Stage 2 replaces the internals of
-this module with the template-driven engine.
+Stage 2 moved the receipt body out of one large f-string and into editable
+template files, rendered by the deliberately-dumb template_engine. This module
+is the "renderer precomputes" half of governing principle 1: templates get
+booleans and finished strings, never logic.
+
+Layout of the render:
+
+    base.html            the document; pulls in styles.css and the blocks below
+    receipt_info.html    title, type badge, receipt meta, bill-to box
+    items_table.html     the line-item table shell
+    item_header_cell.html / item_row_cell.html
+                         one column each -- the renderer iterates ITEM_COLUMNS
+                         and joins, so a column can appear or vanish without any
+                         template edit (there are no loops in the engine)
+    totals.html / totals_row.html
+    terms.html           the warranty/returns page
+    header.html / footer.html
+                         Chromium page header/footer; a restricted context where
+                         styles.css does NOT apply and CSS must be inline
+
+Money is Decimal end to end (principle 7): each line is rounded to the display
+precision and the rounded values are summed, so the printed figures visibly add
+up rather than drifting by a cent against an unrounded total.
+
+BLOCK_CONTEXTS is the single source of truth for which placeholders each block
+may use. The linter checks templates against it at load time and the renderer
+builds each block's context from the same map, so a typo is a startup error
+naming the file and line -- never a silently blank field on a legal document.
 """
 import base64
 import html as html_utils
 import mimetypes
 import os
 import re
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
+import config
+import template_engine
+from template_engine import TemplateError
 from config import (
-    APP_DIR,
     RESOURCE_DIR,
-    HEADER_FILE,
-    FOOTER_FILE,
     PDF_MARGIN_LEFT,
     PDF_MARGIN_RIGHT,
+    branding_template_path,
+    install_default_templates,
     read_html_file,
     load_app_settings,
 )
@@ -53,7 +80,8 @@ def resolve_local_asset_path(src):
     if os.path.isabs(clean_src):
         return os.path.abspath(clean_src)
 
-    for base_dir in (APP_DIR, RESOURCE_DIR):
+    # Read through the module so --config-dir re-rooting is picked up.
+    for base_dir in (config.APP_DIR, RESOURCE_DIR):
         asset_path = os.path.abspath(os.path.join(base_dir, clean_src))
         try:
             if os.path.commonpath([base_dir, asset_path]) != base_dir:
@@ -157,7 +185,9 @@ def default_footer_html():
 
 
 def build_page_header_template():
-    header_html = read_html_file(HEADER_FILE).strip() or default_header_html()
+    # Resolved per render, so dropping a header.html beside the exe takes effect
+    # without a restart.
+    header_html = read_html_file(branding_template_path("header.html")).strip() or default_header_html()
     header_html = render_settings_template(header_html)
     header_html = inline_local_images(header_html)
     return f"""<style>
@@ -203,7 +233,7 @@ def build_page_header_template():
 
 
 def build_page_footer_template():
-    footer_html = read_html_file(FOOTER_FILE).strip() or default_footer_html()
+    footer_html = read_html_file(branding_template_path("footer.html")).strip() or default_footer_html()
     footer_html = render_settings_template(footer_html)
     footer_html = inline_local_images(footer_html)
     return f"""<style>
@@ -247,264 +277,302 @@ def build_page_footer_template():
 </div>"""
 
 
+# ------------------- amounts (Decimal end to end) -------------------
+# Stage 3 replaces these two with the `currency` config block (symbol, code,
+# decimals, position, group_style, negative_style). Until then they reproduce
+# today's output exactly -- including the fact that line cells are ungrouped
+# ("Rs. 17000.00") while totals are grouped ("Rs. 22,450.00").
+CURRENCY_SYMBOL = "Rs. "
+AMOUNT_DECIMALS = 2
+
+def _quant():
+    """Read AMOUNT_DECIMALS at call time so Stage 3 (and tests) can vary it."""
+    return Decimal(1).scaleb(-AMOUNT_DECIMALS)
+
+
+def to_decimal(value):
+    """Coerce user/JSON input to Decimal without inheriting binary float noise."""
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value).strip() or "0")
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0")
+
+
+def quantize(value):
+    """Round to the display precision, half-up (what a till receipt does)."""
+    return to_decimal(value).quantize(_quant(), rounding=ROUND_HALF_UP)
+
+
+def format_amount(value, group=False):
+    """Format an amount for display, e.g. 'Rs. 22,450.00'."""
+    amount = quantize(value)
+    number = f"{amount:,.{AMOUNT_DECIMALS}f}" if group else f"{amount:.{AMOUNT_DECIMALS}f}"
+    return f"{CURRENCY_SYMBOL}{number}"
+
+
+# ------------------- line-item columns -------------------
+# (key, heading, css class, optional). "optional" columns appear only when at
+# least one line uses them. The renderer walks this list for both the header and
+# every row, so adding or hiding a column needs no template edit -- which is what
+# lets Stage 5 drive it from fields.json.
+ITEM_COLUMNS = (
+    ("sku",      "SKU",              "",    False),
+    ("desc",     "Item Description", "",    False),
+    ("serial",   "Serial Number",    "",    False),
+    ("qty",      "Qty",              "num", False),
+    ("price",    "Unit Price",       "num", False),
+    ("discount", "Discount",         "num", True),
+    ("tax",      "Tax",              "num", True),
+    ("amount",   "Amount",           "num", False),
+)
+
+NO_WARRANTY_LABEL = "No Warranty"
+EMPTY_CELL = "-"
+
+# ------------------- template blocks -------------------
+#: The one source of truth for what each block may reference. The load-time lint
+#: checks templates against this; the renderer builds contexts from it.
+BLOCK_CONTEXTS = {
+    "base.html": {"resource_base", "styles", "font_faces", "receipt_info",
+                  "items_table", "totals", "terms"},
+    "styles.css": set(),
+    "receipt_info.html": {"type_badge", "invoice_no", "date", "customer_name",
+                          "customer_phone", "customer_email"},
+    "items_table.html": {"header_cells", "rows"},
+    "item_header_cell.html": {"label", "css_class"},
+    "item_row_cell.html": {"value", "css_class", "note"},
+    "totals.html": {"totals_rows", "total"},
+    "totals_row.html": {"label", "amount"},
+    "terms.html": set(),
+}
+
+_TEMPLATE_CACHE = {}
+
+
+def clear_template_cache():
+    """Drop compiled templates so the next render re-reads from disk."""
+    _TEMPLATE_CACHE.clear()
+
+
+def load_templates(force=False):
+    """Compile and lint every block. Raises TemplateError naming file and line.
+
+    This is the only IO in the render path; everything downstream of it is pure,
+    which is what makes the golden diff and the unit tests possible.
+    """
+    if _TEMPLATE_CACHE and not force:
+        return _TEMPLATE_CACHE
+
+    install_default_templates()
+    compiled = {}
+    for name, allowed in BLOCK_CONTEXTS.items():
+        path = branding_template_path(name)
+        if not os.path.isfile(path):
+            raise TemplateError(
+                f"template is missing. Expected it at {path}. Reinstall the app "
+                f"or restore the file from the repository.", name)
+        compiled[name] = template_engine.load_template(path, allowed=allowed)
+
+    _TEMPLATE_CACHE.clear()
+    _TEMPLATE_CACHE.update(compiled)
+    return _TEMPLATE_CACHE
+
+
+def _block(templates, name, context=None):
+    """Render one block, dropping the single trailing newline the file carries.
+
+    Template files end with a newline (POSIX convention, and what every editor
+    writes) while base.html supplies its own separators, so that newline would
+    otherwise double up. Exactly one is removed, so a template that deliberately
+    ends in a blank line keeps it.
+    """
+    rendered = templates[name].render(context or {})
+    return rendered[:-1] if rendered.endswith("\n") else rendered
+
+
 def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online", shipping=0.0):
-    type_badge = "ONLINE ORDER" if receipt_type == "Online" else "IN-STORE SALE"
+    """Render a complete receipt document.
 
-    # Optional columns appear only when at least one line item uses them.
-    show_discount = any(i.get("discount", 0.0) for i in items)
-    show_tax = any(i.get("tax", 0.0) for i in items)
-
-    header_cells = (
-        "<th>SKU</th><th>Item Description</th><th>Serial Number</th>"
-        "<th>Qty</th><th>Unit Price</th>"
+    Signature unchanged from Stage 1 so the GUI, cli.py and the fidelity test
+    keep calling it the same way; the internals are now template-driven.
+    """
+    templates = load_templates()
+    return render_receipt(
+        {
+            "invoice_no": inv_no,
+            "date": date_str,
+            "customer_name": cust,
+            "customer_phone": phone,
+            "customer_email": email,
+            "items": items,
+            "receipt_type": receipt_type,
+            "shipping": shipping,
+        },
+        templates,
+        resource_base=file_url_for_directory(RESOURCE_DIR),
+        font_faces=build_font_faces(load_app_settings().get("fonts")),
     )
-    if show_discount:
-        header_cells += "<th>Discount</th>"
-    if show_tax:
-        header_cells += "<th>Tax</th>"
-    header_cells += "<th>Amount</th>"
 
-    rows_html = ""
+
+def render_receipt(data, templates, resource_base="", font_faces=""):
+    """Pure render: (data, templates) -> html. No clock, no IO, no globals.
+
+    Everything non-deterministic (the resource base URL, the invoice number, the
+    date string, the base64 font payload) is injected by the caller -- principle 2.
+    """
+    items = data.get("items") or []
+
+    # --- line items -----------------------------------------------------
+    used = {key for key, _label, _cls, optional in ITEM_COLUMNS if not optional}
+    for key, _label, _cls, optional in ITEM_COLUMNS:
+        if optional and any(quantize(item.get(key, 0)) for item in items):
+            used.add(key)
+    columns = [col for col in ITEM_COLUMNS if col[0] in used]
+
+    header_cells = "".join(
+        _block(templates, "item_header_cell.html", {"label": label, "css_class": css})
+        for _key, label, css, _optional in columns
+    )
+
+    rows = []
     for item in items:
-        warranty_display = ""
-        if item["warranty"] and item["warranty"] != "No Warranty":
-            warranty_display = (
-                f'<br/><span class="item-warranty-text">'
-                f'{escape(item["warranty"])}</span>'
-            )
-        discount = item.get("discount", 0.0)
-        tax = item.get("tax", 0.0)
-        amount = item["qty"] * item["price"]
-        cells = (
-            f"<td>{escape(item['sku']) or '-'}</td>"
-            f"<td>{escape(item['desc'])}{warranty_display}</td>"
-            f"<td>{escape(item['serial']) or '-'}</td>"
-            f'<td class="num">{item["qty"]}</td>'
-            f'<td class="num">Rs. {item["price"]:.2f}</td>'
+        cells = "".join(
+            _block(templates, "item_row_cell.html", _cell_context(item, key, css))
+            for key, _label, css, _optional in columns
         )
-        if show_discount:
-            cells += f'<td class="num">{("Rs. %.2f" % discount) if discount else "-"}</td>'
-        if show_tax:
-            cells += f'<td class="num">{("Rs. %.2f" % tax) if tax else "-"}</td>'
-        cells += f'<td class="num">Rs. {amount:.2f}</td>'
-        rows_html += f"<tr>{cells}</tr>"
+        rows.append(f"<tr>{cells}</tr>")
 
-    subtotal = sum(i["qty"] * i["price"] for i in items)
-    total_discount = sum(i.get("discount", 0.0) for i in items)
-    total_tax = sum(i.get("tax", 0.0) for i in items)
-    total = subtotal + total_tax - total_discount + shipping
+    # --- totals ---------------------------------------------------------
+    # Sum the *rounded* line values so the printed figures add up on the page.
+    subtotal = sum((quantize(quantize(i.get("qty", 0)) * to_decimal(i.get("price", 0)))
+                    for i in items), Decimal("0"))
+    total_discount = sum((quantize(i.get("discount", 0)) for i in items), Decimal("0"))
+    total_tax = sum((quantize(i.get("tax", 0)) for i in items), Decimal("0"))
+    ship = quantize(data.get("shipping", 0))
+    total = subtotal + total_tax - total_discount + ship
 
-    # Break out the subtotal/components only when there is something besides
-    # the line items to show; otherwise just show TOTAL.
+    # Break the subtotal out only when there is something besides the line items
+    # to show; otherwise TOTAL alone says everything.
     totals_rows = ""
-    if total_tax or total_discount or shipping:
-        totals_rows += (
-            f'<tr class="totals-sub"><td>Subtotal</td>'
-            f'<td align="right">Rs. {subtotal:,.2f}</td></tr>'
-        )
+    if total_tax or total_discount or ship:
+        breakdown = [("Subtotal", format_amount(subtotal, group=True))]
         if total_tax:
-            totals_rows += (
-                f'<tr class="totals-sub"><td>Taxes</td>'
-                f'<td align="right">Rs. {total_tax:,.2f}</td></tr>'
-            )
+            breakdown.append(("Taxes", format_amount(total_tax, group=True)))
         if total_discount:
-            totals_rows += (
-                f'<tr class="totals-sub"><td>Discounts</td>'
-                f'<td align="right">- Rs. {total_discount:,.2f}</td></tr>'
-            )
-        if shipping:
-            totals_rows += (
-                f'<tr class="totals-sub"><td>Shipping Fees</td>'
-                f'<td align="right">Rs. {shipping:,.2f}</td></tr>'
-            )
+            breakdown.append(("Discounts", "- " + format_amount(total_discount, group=True)))
+        if ship:
+            breakdown.append(("Shipping Fees", format_amount(ship, group=True)))
+        totals_rows = "".join(
+            _block(templates, "totals_row.html", {"label": label, "amount": amount})
+            for label, amount in breakdown
+        )
 
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<base href="{file_url_for_directory(RESOURCE_DIR)}">
-<style>
-    @page {{
-        size: A4;
-    }}
-    html, body {{
-        margin: 0;
-        padding: 0;
-    }}
-    body {{
-        font-family: Helvetica, Arial, sans-serif;
-        font-size: 10pt;
-        color: #111;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }}
-    .receipt-title {{
-        font-size: 14pt;
-        font-weight: bold;
-        text-align: center;
-        margin: 0 0 4px 0;
-        letter-spacing: 0;
-    }}
-    .type-badge {{
-        text-align: center;
-        font-size: 9pt;
-        font-weight: bold;
-        color: #ffffff;
-        background-color: #0f172a;
-        padding: 4px 0;
-        margin-bottom: 12px;
-    }}
-    .meta-table {{
-        width: 100%;
-        margin-bottom: 12px;
-        border-bottom: 1px dashed #94a3b8;
-    }}
-    .meta-table td {{
-        font-size: 9pt;
-        padding: 2px 0 6px 0;
-    }}
-    .customer-box {{
-        background-color: #f8fafc;
-        padding: 8px;
-        margin-bottom: 12px;
-        font-size: 9pt;
-    }}
-    table.items {{
-        width: 100%;
-        border-collapse: collapse;
-        margin: 6px 0;
-    }}
-    table.items thead {{
-        display: table-header-group;
-    }}
-    table.items th {{
-        background-color: #0f172a;
-        color: #ffffff;
-        padding: 5px 4px;
-        font-size: 8pt;
-        text-align: left;
-        border: 1px solid #0f172a;
-    }}
-    table.items td {{
-        border-bottom: 1px solid #cbd5e1;
-        padding: 5px 4px;
-        font-size: 9pt;
-        vertical-align: top;
-    }}
-    table.items tr {{
-        break-inside: avoid;
-        page-break-inside: avoid;
-    }}
-    table.items td.num {{
-        text-align: right;
-    }}
-    .item-warranty-text {{
-        color: #6b7280;
-        font-style: italic;
-        font-size: 8pt;
-    }}
-    .totals-table {{
-        width: 50%;
-        margin-left: 50%;
-        margin-top: 8px;
-        font-size: 10pt;
-    }}
-    .totals-table td {{
-        padding: 3px 0;
-        font-size: 10pt;
-    }}
-    .totals-table tr.totals-sub td {{
-        color: #334155;
-    }}
-    .totals-table tr.totals-grand td {{
-        padding: 6px 0;
-        border-top: 2px solid #0f172a;
-        border-bottom: 2px solid #0f172a;
-        font-weight: bold;
-        font-size: 12pt;
-    }}
-    .customer-box,
-    .totals-table {{
-        break-inside: avoid;
-        page-break-inside: avoid;
-    }}
-    .policy-page {{
-        page-break-before: always;
-        break-before: page;
-    }}
-    .policy-title {{
-        font-size: 12pt;
-        font-weight: bold;
-        text-align: center;
-        margin: 0 0 10px 0;
-        color: #0f172a;
-    }}
-    .policy-columns {{
-        column-count: 2;
-        column-gap: 22px;
-    }}
-    .policy-section {{
-        break-inside: avoid;
-        page-break-inside: avoid;
-        margin: 0 0 9px 0;
-    }}
-    .policy-heading {{
-        font-size: 9pt;
-        font-weight: bold;
-        color: #0f172a;
-        margin: 0 0 3px 0;
-    }}
-    .policy-section ul {{
-        margin: 0;
-        padding-left: 14px;
-    }}
-    .policy-section li {{
-        font-size: 7.8pt;
-        line-height: 1.35;
-        margin-bottom: 2px;
-        color: #1f2937;
-    }}
-</style>
-</head>
-<body>
+    # --- assemble -------------------------------------------------------
+    receipt_type = data.get("receipt_type", "Online")
+    receipt_info = _block(templates, "receipt_info.html", {
+        # Stage 3 moves this wording into receipt_types config / strings.json.
+        "type_badge": "ONLINE ORDER" if receipt_type == "Online" else "IN-STORE SALE",
+        "invoice_no": data.get("invoice_no", ""),
+        "date": data.get("date", ""),
+        "customer_name": data.get("customer_name", ""),
+        "customer_phone": data.get("customer_phone", ""),
+        "customer_email": data.get("customer_email", ""),
+    })
+    items_table = _block(templates, "items_table.html", {
+        "header_cells": header_cells,
+        "rows": "".join(rows),
+    })
+    totals = _block(templates, "totals.html", {
+        "totals_rows": totals_rows,
+        "total": format_amount(total, group=True),
+    })
 
-<div class="receipt-title">SALES RECEIPT</div>
-<div class="type-badge">{type_badge}</div>
+    return _block(templates, "base.html", {
+        "resource_base": resource_base,
+        "styles": _block(templates, "styles.css"),
+        "font_faces": font_faces,
+        "receipt_info": receipt_info,
+        "items_table": items_table,
+        "totals": totals,
+        "terms": _block(templates, "terms.html"),
+    })
 
-<table class="meta-table">
-    <tr>
-        <td><strong>Receipt No:</strong> {escape(inv_no)}</td>
-        <td align="right"><strong>Date:</strong> {escape(date_str)}</td>
-    </tr>
-</table>
 
-<div class="customer-box">
-    <strong>Bill To:</strong><br/>
-    {escape(cust)}<br/>
-    {('Phone: ' + escape(phone) + '<br/>') if phone else ''}
-    {('Email: ' + escape(email)) if email else ''}
-</div>
+_FONT_MIME = {
+    ".woff2": "font/woff2", ".woff": "font/woff",
+    ".ttf": "font/ttf", ".otf": "font/otf",
+}
+_CSS_UNSAFE = re.compile(r"[^A-Za-z0-9 _-]")
 
-<table class="items">
-    <thead>
-        <tr>{header_cells}</tr>
-    </thead>
-    <tbody>
-        {rows_html}
-    </tbody>
-</table>
 
-<table class="totals-table">{totals_rows}
-    <tr class="totals-grand">
-        <td>TOTAL</td>
-        <td align="right">Rs. {total:,.2f}</td>
-    </tr>
-</table>
+def build_font_faces(fonts):
+    """CSS embedding the configured font, or '' when none is configured.
 
-{warranty_policy_html()}
+    Returned as an engine-produced fragment inserted with ``|raw`` after
+    styles.css, so it overrides the stylesheet's default family. The family name
+    is stripped of everything but letters, digits, spaces, hyphens and
+    underscores before it reaches CSS: principle 4 allows no user value to be
+    interpolated into a CSS context, and escaping cannot make CSS safe the way
+    it does for an HTML text node.
 
-</body>
-</html>"""
+    Font files are inlined as base64 so a receipt still renders with no network.
+    """
+    fonts = fonts or {}
+    family = _CSS_UNSAFE.sub("", str(fonts.get("family", "")).strip())
+    files = [f for f in (fonts.get("files") or []) if str(f).strip()]
+    if not family or not files:
+        return ""
+
+    faces = []
+    for entry in files:
+        path = resolve_local_asset_path(str(entry))
+        if not path or not os.path.isfile(path):
+            continue
+        mime = _FONT_MIME.get(os.path.splitext(path)[1].lower())
+        if not mime:
+            continue
+        with open(path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("ascii")
+        faces.append(
+            f"    @font-face {{\n"
+            f"        font-family: '{family}';\n"
+            f"        src: url(data:{mime};base64,{encoded});\n"
+            f"        font-display: block;\n"
+            f"    }}"
+        )
+    if not faces:
+        return ""
+
+    fallback = _CSS_UNSAFE.sub("", str(fonts.get("fallback", "")).strip().replace(",", "\x00"))
+    fallback = fallback.replace("\x00", ",")
+    stack = f"'{family}'" + (f", {fallback}" if fallback else "")
+    faces.append(f"    body {{\n        font-family: {stack};\n    }}")
+    return "\n" + "\n".join(faces)
+
+
+def _cell_context(item, key, css_class):
+    """Precompute one cell's finished strings -- templates make no decisions."""
+    note = ""
+    if key == "desc":
+        warranty = str(item.get("warranty", "") or "")
+        if warranty and warranty != NO_WARRANTY_LABEL:
+            note = warranty
+        value = item.get("desc", "")
+    elif key == "qty":
+        value = item.get("qty", "")
+    elif key == "price":
+        value = format_amount(item.get("price", 0))
+    elif key == "amount":
+        value = format_amount(quantize(item.get("qty", 0)) * to_decimal(item.get("price", 0)))
+    elif key in ("discount", "tax"):
+        raw = quantize(item.get(key, 0))
+        value = format_amount(raw) if raw else EMPTY_CELL
+    else:  # sku, serial -- plain text with a dash when blank
+        value = str(item.get(key, "") or "") or EMPTY_CELL
+
+    return {"value": value, "css_class": css_class, "note": note}
 
 
 def warranty_policy_html():

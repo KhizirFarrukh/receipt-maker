@@ -1,10 +1,18 @@
-"""Paths, config constants, and config-file loaders (tkinter-free).
+"""Paths, config constants, and config-file loading (tkinter-free).
 
-Extracted from main.py in Stage 1 so the render/service layers, cli.py, and the
-tests can import configuration without pulling in tkinter. Stage 2 adds
-schema_version/migrate/validate/atomic-writes here; for now this is a faithful
-relocation of the existing loaders.
+Stage 2 turns this from a pair of loaders into the one place that owns config:
+a declared ``schema_version``, a ``migrate()`` that restructures older files,
+a ``validate()`` that rejects nonsense in plain language before a render can
+fail halfway, and atomic conflict-aware writes that always leave a ``.bak``.
+
+Governing rules this file implements (PLAN-generalization.md):
+  * config is validated, not trusted -- ``validate()`` names the file and key;
+  * do no harm -- every rewrite keeps a timestamped ``.bak``, and a config
+    written by a newer build is refused rather than silently downgraded;
+  * deep-merge only *fills* missing keys, so a user's edits are never replaced
+    by defaults; only ``migrate()`` may restructure.
 """
+import datetime
 import json
 import os
 import sys
@@ -13,15 +21,69 @@ import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else BASE_DIR
 RESOURCE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
-HEADER_FILE = os.path.join(RESOURCE_DIR, "header.html")
-FOOTER_FILE = os.path.join(RESOURCE_DIR, "footer.html")
+
+# Templates live beside the executable so they can be edited; the bundled copy
+# in RESOURCE_DIR is the read-only source they are seeded from on first run.
+TEMPLATES_DIRNAME = "Templates"
+TEMPLATES_DIR = os.path.join(APP_DIR, TEMPLATES_DIRNAME)
+BUNDLED_TEMPLATES_DIR = os.path.join(RESOURCE_DIR, TEMPLATES_DIRNAME)
+INSTALLED_MANIFEST = ".installed.json"
+
+
+def branding_template_path(filename):
+    """Path to an editable template, preferring the user's own copy.
+
+    Search order, first hit wins:
+      1. APP_DIR/Templates/     -- where Stage 2 puts editable templates
+      2. APP_DIR/               -- pre-Stage-2 layout, still honoured so an
+                                   existing install's edits keep working
+      3. RESOURCE_DIR/Templates/ and RESOURCE_DIR/ -- the read-only bundled copies
+
+    A copy beside the executable beating the bundled one is what makes the
+    README's "edit header.html / footer.html" instructions true in a packaged
+    install; previously only the read-only RESOURCE_DIR copy was ever consulted.
+    Unfrozen, APP_DIR and RESOURCE_DIR are both the repo root.
+    """
+    for directory in (TEMPLATES_DIR, APP_DIR, BUNDLED_TEMPLATES_DIR, RESOURCE_DIR):
+        candidate = os.path.join(directory, filename)
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(TEMPLATES_DIR, filename)
+
+
+HEADER_FILE = branding_template_path("header.html")
+FOOTER_FILE = branding_template_path("footer.html")
 APP_SETTINGS_FILE = os.path.join(APP_DIR, "appsettings.json")
 FILENAME_CONFIG_FILE = os.path.join(APP_DIR, "filename_config.json")
 OUTPUT_DIR = os.path.join(APP_DIR, "invoices")
+
 PDF_MARGIN_TOP = "150px"
 PDF_MARGIN_BOTTOM = "100px"
 PDF_MARGIN_LEFT = "24px"
 PDF_MARGIN_RIGHT = "24px"
+
+
+def set_app_dir(path):
+    """Re-root every APP_DIR-derived path at ``path``.
+
+    This is what makes ``cli.py --config-dir`` real, and with it a hermetic
+    gate: without it, a check or a render validates whatever happens to sit in
+    the developer's own APP_DIR, so the result depends on the machine.
+
+    Other modules must read these through the ``config`` module rather than
+    importing the names, or they keep a stale copy from import time.
+    """
+    global APP_DIR, TEMPLATES_DIR, APP_SETTINGS_FILE, FILENAME_CONFIG_FILE
+    global OUTPUT_DIR, HEADER_FILE, FOOTER_FILE
+
+    APP_DIR = os.path.abspath(path)
+    TEMPLATES_DIR = os.path.join(APP_DIR, TEMPLATES_DIRNAME)
+    APP_SETTINGS_FILE = os.path.join(APP_DIR, "appsettings.json")
+    FILENAME_CONFIG_FILE = os.path.join(APP_DIR, "filename_config.json")
+    OUTPUT_DIR = os.path.join(APP_DIR, "invoices")
+    HEADER_FILE = branding_template_path("header.html")
+    FOOTER_FILE = branding_template_path("footer.html")
+    return APP_DIR
 
 if getattr(sys, "frozen", False):
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(RESOURCE_DIR, "ms-playwright"))
@@ -44,7 +106,15 @@ DATE_PARSE_FORMATS = (
 )
 FILENAME_FIELD_OPTIONS = ("date", "name", "email", "phone")
 DEFAULT_FILENAME_FIELDS = ["date", "name"]
+
+# ------------------- schema -------------------
+#: Bumped whenever appsettings.json is *restructured*. Adding a key with a
+#: default does not need a bump -- deep-merge already fills it in.
+SCHEMA_VERSION = 2
+SCHEMA_VERSION_KEY = "schema_version"
+
 DEFAULT_APP_SETTINGS = {
+    SCHEMA_VERSION_KEY: SCHEMA_VERSION,
     "company": {
         "name": "Your Company",
         "address": "Your business address",
@@ -60,12 +130,53 @@ DEFAULT_APP_SETTINGS = {
         "private_key_path": "signing/private_key.pem",
         "certificate_path": "signing/certificate.pem",
         "key_passphrase": "",
-        "signer_name": "Chawla Tech",
+        # Neutral defaults -- the store's identity belongs in the user's own
+        # appsettings.json, not in the shipped defaults.
+        "signer_name": "Your Company",
         "reason": "Receipt authenticity",
-        "location": "chawlatech.pk",
+        "location": "",
         "tsa_url": "",
     },
+    # PDF page geometry. The top/bottom margins must reserve room for the page
+    # header and footer templates, or Chromium clips them -- see Templates/header.html.
+    "document": {
+        "margin_top": PDF_MARGIN_TOP,
+        "margin_bottom": PDF_MARGIN_BOTTOM,
+        "margin_left": PDF_MARGIN_LEFT,
+        "margin_right": PDF_MARGIN_RIGHT,
+    },
+    "render": {
+        # Receipts must generate offline and identically on every machine, and a
+        # template-referenced CDN must not be able to phone out.
+        "block_external_requests": True,
+        "timeout_ms": 30000,
+        "fail_on_missing_image": False,
+    },
+    # Embedding a font makes a receipt render identically everywhere; with no
+    # family set, Chromium substitutes a system font and the same receipt can
+    # differ across machines. Empty by default: no font is bundled yet, so the
+    # user supplies an OFL-licensed file under Templates/fonts/ and names it
+    # here. Files are inlined as base64 @font-face, so rendering stays offline.
+    "fonts": {
+        "family": "",
+        "files": [],
+        "fallback": "Helvetica, Arial, sans-serif",
+    },
 }
+
+class ConfigError(Exception):
+    """A config file is unusable. Carries the file and key so the UI can say where."""
+
+    def __init__(self, message, filename=None, key=None):
+        self.message = message
+        self.filename = filename
+        self.key = key
+        where = " -> ".join(p for p in (os.path.basename(filename) if filename else None, key) if p)
+        super().__init__(f"{where}: {message}" if where else message)
+
+
+class ConfigConflict(Exception):
+    """The file changed on disk since it was read; writing would clobber an edit."""
 
 
 # ------------------- read HTML snippets -------------------
@@ -76,70 +187,292 @@ def read_html_file(path):
         return f.read()
 
 
-def load_app_settings():
-    if not os.path.exists(APP_SETTINGS_FILE):
-        save_default_app_settings()
-        return default_app_settings()
+# ------------------- merge / migrate / validate -------------------
+def deep_merge(defaults, override):
+    """Return defaults with override's values laid on top. Fills gaps only.
 
-    try:
-        with open(APP_SETTINGS_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return default_app_settings()
+    A key present in override always wins; a key missing from override takes the
+    default. Nested dicts merge recursively, so adding a new default key in a
+    future build reaches existing configs without touching the user's edits.
+    """
+    merged = {}
+    for key, default_value in defaults.items():
+        if isinstance(default_value, dict):
+            supplied = override.get(key)
+            merged[key] = deep_merge(default_value, supplied if isinstance(supplied, dict) else {})
+        elif key in override:
+            merged[key] = override[key]
+        else:
+            merged[key] = default_value
+    # Preserve keys the user added that defaults do not know about, so a
+    # hand-written extra never silently disappears on the next rewrite.
+    for key, value in override.items():
+        if key not in merged:
+            merged[key] = value
+    return merged
 
-    settings = default_app_settings()
-    if not isinstance(config, dict):
-        return settings
 
-    company_config = config.get("company", {})
-    if isinstance(company_config, dict):
-        for key in settings["company"]:
-            value = company_config.get(key)
-            if isinstance(value, str):
-                settings["company"][key] = value.strip()
+def migrate(raw, filename=None):
+    """Bring a loaded appsettings dict up to SCHEMA_VERSION.
 
-    signing_config = config.get("signing", {})
-    if isinstance(signing_config, dict):
-        for key, default_value in settings["signing"].items():
-            value = signing_config.get(key)
-            if isinstance(default_value, bool):
-                if isinstance(value, bool):
-                    settings["signing"][key] = value
-            elif isinstance(value, str):
-                settings["signing"][key] = value.strip()
+    Returns ``(settings, changed)``; ``changed`` is True when the file on disk
+    should be rewritten. Raises ConfigError for a config written by a newer
+    build -- silently downgrading it would drop keys the user relies on.
+    """
+    if not isinstance(raw, dict):
+        raise ConfigError("expected a JSON object at the top level", filename)
+
+    version = raw.get(SCHEMA_VERSION_KEY, 1)
+    if not isinstance(version, int) or isinstance(version, bool):
+        raise ConfigError(
+            f"must be a whole number, got {version!r}", filename, SCHEMA_VERSION_KEY)
+    if version > SCHEMA_VERSION:
+        raise ConfigError(
+            f"this file was written by a newer version of the app "
+            f"(schema {version}; this build understands {SCHEMA_VERSION}). "
+            f"Update the app, or restore an older copy of the file.",
+            filename, SCHEMA_VERSION_KEY)
+
+    migrated = dict(raw)
+    changed = False
+
+    if version < 2:
+        # v1 -> v2: v1 was a flat file with only `company` and `signing`, and no
+        # declared version. Page geometry and render policy were Python
+        # constants; they become config so templates and --check can see them.
+        # Nothing is renamed, so v1 values carry over untouched -- which is what
+        # keeps the next invoice number and the rendered output identical.
+        migrated[SCHEMA_VERSION_KEY] = 2
+        changed = True
+
+    settings = deep_merge(DEFAULT_APP_SETTINGS, migrated)
+    if settings != migrated:
+        changed = True
+    settings[SCHEMA_VERSION_KEY] = SCHEMA_VERSION
+    return settings, changed
+
+
+_ALLOWED_LENGTH_UNITS = ("px", "mm", "cm", "in", "pt", "pc")
+
+
+def validate(settings, filename=None):
+    """Raise ConfigError on anything that would break a render. Returns settings.
+
+    Runs at load and after any app-side write, so problems surface at startup
+    with a file+key, not as a broken receipt.
+    """
+    filename = filename or APP_SETTINGS_FILE
+
+    company = settings.get("company")
+    if not isinstance(company, dict):
+        raise ConfigError("must be an object", filename, "company")
+    for key in ("name", "address", "phone", "email", "logo_path"):
+        if not isinstance(company.get(key, ""), str):
+            raise ConfigError("must be text", filename, f"company.{key}")
+    if not str(company.get("name", "")).strip():
+        raise ConfigError(
+            "must not be empty -- it names the business on every receipt",
+            filename, "company.name")
+
+    signing = settings.get("signing")
+    if not isinstance(signing, dict):
+        raise ConfigError("must be an object", filename, "signing")
+    if not isinstance(signing.get("enabled", True), bool):
+        raise ConfigError("must be true or false", filename, "signing.enabled")
+    for key in ("private_key_path", "certificate_path", "key_passphrase",
+                "signer_name", "reason", "location", "tsa_url"):
+        if not isinstance(signing.get(key, ""), str):
+            raise ConfigError("must be text", filename, f"signing.{key}")
+    if signing.get("enabled", True):
+        for key in ("private_key_path", "certificate_path"):
+            if not str(signing.get(key, "")).strip():
+                raise ConfigError(
+                    "signing is enabled, so this path is required "
+                    "(or set signing.enabled to false)", filename, f"signing.{key}")
+    tsa = str(signing.get("tsa_url", "")).strip()
+    if tsa and not tsa.lower().startswith(("http://", "https://")):
+        raise ConfigError(
+            "must be an http:// or https:// URL when set", filename, "signing.tsa_url")
+
+    document = settings.get("document")
+    if not isinstance(document, dict):
+        raise ConfigError("must be an object", filename, "document")
+    for key in ("margin_top", "margin_bottom", "margin_left", "margin_right"):
+        value = str(document.get(key, "")).strip()
+        if not value:
+            raise ConfigError("must not be empty", filename, f"document.{key}")
+        if value == "0":
+            continue                      # a bare zero is a valid CSS length
+        if not value.lower().endswith(_ALLOWED_LENGTH_UNITS):
+            raise ConfigError(
+                f"must be a CSS length ending in one of "
+                f"{', '.join(_ALLOWED_LENGTH_UNITS)} (got {value!r})",
+                filename, f"document.{key}")
+        try:
+            if float(value[:-2].strip()) < 0:
+                raise ValueError
+        except ValueError:
+            raise ConfigError(
+                f"must be a non-negative CSS length (got {value!r})",
+                filename, f"document.{key}") from None
+
+    render = settings.get("render")
+    if not isinstance(render, dict):
+        raise ConfigError("must be an object", filename, "render")
+    for key in ("block_external_requests", "fail_on_missing_image"):
+        if not isinstance(render.get(key, False), bool):
+            raise ConfigError("must be true or false", filename, f"render.{key}")
+    timeout = render.get("timeout_ms", 30000)
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+        raise ConfigError(
+            "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
+
+    fonts = settings.get("fonts")
+    if not isinstance(fonts, dict):
+        raise ConfigError("must be an object", filename, "fonts")
+    for key in ("family", "fallback"):
+        if not isinstance(fonts.get(key, ""), str):
+            raise ConfigError("must be text", filename, f"fonts.{key}")
+    files = fonts.get("files", [])
+    if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+        raise ConfigError("must be a list of file paths", filename, "fonts.files")
+    if str(fonts.get("family", "")).strip() and not files:
+        raise ConfigError(
+            "a font family is set but no font files are listed, so the family "
+            "could never load -- add the file(s) or clear fonts.family",
+            filename, "fonts.files")
+
     return settings
 
 
-def default_app_settings():
-    return {
-        "company": dict(DEFAULT_APP_SETTINGS["company"]),
-        "signing": dict(DEFAULT_APP_SETTINGS["signing"]),
-    }
+# ------------------- atomic, conflict-aware writes -------------------
+def backup_path(path, now=None):
+    """Timestamped sibling backup name, e.g. appsettings.json.20260822-2215.bak."""
+    stamp = (now or datetime.datetime.now()).strftime("%Y%m%d-%H%M%S")
+    return f"{path}.{stamp}.bak"
 
 
-def save_default_app_settings():
+def atomic_write_json(path, data, expected_mtime=None, keep_backup=True):
+    """Write data to path atomically, keeping a .bak of what was there.
+
+    ``expected_mtime`` is the mtime the caller last read. If the file has
+    changed since, ConfigConflict is raised instead of clobbering someone's
+    edit. The write goes to a temp file in the same directory and is moved into
+    place with os.replace, so a crash mid-write can never leave a half file.
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+
+    if expected_mtime is not None and os.path.exists(path):
+        if os.path.getmtime(path) != expected_mtime:
+            raise ConfigConflict(
+                f"{os.path.basename(path)} was changed on disk since it was read. "
+                f"Reload it, or overwrite deliberately.")
+
+    if keep_backup and os.path.exists(path):
+        try:
+            backup = backup_path(path)
+            with open(path, "rb") as src, open(backup, "wb") as dst:
+                dst.write(src.read())
+        except OSError:
+            pass  # a missing backup must not stop the app from saving
+
+    tmp = f"{path}.{os.getpid()}.tmp"
     try:
-        with open(APP_SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_APP_SETTINGS, f, indent=2)
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(data, f, indent=2)
             f.write("\n")
+        os.replace(tmp, path)
+    except OSError:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        raise
+
+
+# ------------------- loaders -------------------
+def default_app_settings():
+    return json.loads(json.dumps(DEFAULT_APP_SETTINGS))   # deep copy
+
+
+def load_app_settings(path=None, validate_settings=True):
+    """Load, migrate and validate appsettings.json.
+
+    A file that needs migrating is rewritten in place (keeping a ``.bak``) so the
+    migration happens once rather than on every launch. An unreadable or invalid
+    file falls back to defaults rather than taking the app down -- the file is
+    left untouched in that case so the user can fix it.
+    """
+    path = path or APP_SETTINGS_FILE
+    if not os.path.exists(path):
+        save_default_app_settings(path)
+        return default_app_settings()
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        mtime = os.path.getmtime(path)
+    except (OSError, json.JSONDecodeError):
+        return default_app_settings()
+
+    try:
+        settings, changed = migrate(raw, path)
+        if validate_settings:
+            validate(settings, path)
+    except ConfigError:
+        raise
+    except Exception:
+        return default_app_settings()
+
+    if changed:
+        try:
+            atomic_write_json(path, settings, expected_mtime=mtime)
+        except (OSError, ConfigConflict):
+            pass  # keep running on the in-memory value; retry next launch
+
+    settings = _normalize_strings(settings)
+    return settings
+
+
+def _normalize_strings(settings):
+    """Trim whitespace on the string values the renderer interpolates."""
+    for section in ("company", "signing"):
+        block = settings.get(section)
+        if isinstance(block, dict):
+            for key, value in list(block.items()):
+                if isinstance(value, str):
+                    block[key] = value.strip()
+    return settings
+
+
+def save_default_app_settings(path=None):
+    path = path or APP_SETTINGS_FILE
+    try:
+        atomic_write_json(path, DEFAULT_APP_SETTINGS, keep_backup=False)
     except OSError:
         pass
 
 
-def load_filename_fields():
-    if not os.path.exists(FILENAME_CONFIG_FILE):
-        save_default_filename_config()
-        return DEFAULT_FILENAME_FIELDS
+def load_filename_fields(path=None):
+    path = path or FILENAME_CONFIG_FILE
+    if not os.path.exists(path):
+        save_default_filename_config(path)
+        return list(DEFAULT_FILENAME_FIELDS)
 
     try:
-        with open(FILENAME_CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             config = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return DEFAULT_FILENAME_FIELDS
+        return list(DEFAULT_FILENAME_FIELDS)
+
+    if not isinstance(config, dict):
+        return list(DEFAULT_FILENAME_FIELDS)
 
     fields = config.get("filename_fields", DEFAULT_FILENAME_FIELDS)
     if not isinstance(fields, list):
-        return DEFAULT_FILENAME_FIELDS
+        return list(DEFAULT_FILENAME_FIELDS)
 
     selected_fields = []
     for field in fields:
@@ -148,14 +481,85 @@ def load_filename_fields():
     return selected_fields
 
 
-def save_default_filename_config():
+def file_digest(path):
+    """sha256 of a file's bytes, or '' if it cannot be read."""
+    import hashlib
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return ""
+
+
+def install_default_templates(force=False):
+    """Seed APP_DIR/Templates from the bundled copies on first run.
+
+    Records ``Templates/.installed.json`` -- ``{filename: {hash, installed}}``
+    taken **at copy time**. A later upgrade needs that to tell "the user edited
+    this" from "this is last version's default": unchanged files can be replaced
+    silently, edited ones must be left alone. Recording the hashes later, or
+    deriving them from the new build, would lose that distinction forever.
+
+    Returns the list of filenames copied. Never overwrites an existing file
+    unless ``force`` (principle 6: user-edited templates are never silently
+    replaced). No-op when the bundled and installed directories are the same
+    path, which is the case when running from a source checkout.
+    """
+    source, target = BUNDLED_TEMPLATES_DIR, TEMPLATES_DIR
+    if not os.path.isdir(source) or os.path.abspath(source) == os.path.abspath(target):
+        return []
+
+    os.makedirs(target, exist_ok=True)
+    manifest_path = os.path.join(target, INSTALLED_MANIFEST)
+    manifest = {}
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+    if not isinstance(manifest, dict):
+        manifest = {}
+
+    copied = []
+    stamp = datetime.datetime.now().isoformat(timespec="seconds")
+    for name in sorted(os.listdir(source)):
+        src = os.path.join(source, name)
+        if not os.path.isfile(src) or name == INSTALLED_MANIFEST:
+            continue
+        dst = os.path.join(target, name)
+        if os.path.exists(dst) and not force:
+            continue
+        # If this install already had an edited copy in the old flat layout,
+        # seed Templates/ from *that* rather than the shipped default. Copying
+        # the default here would put an unedited file in a location that now
+        # shadows the user's own, silently reverting their branding.
+        legacy = os.path.join(APP_DIR, name)
+        if not force and os.path.isfile(legacy):
+            src = legacy
+        try:
+            with open(src, "rb") as s, open(dst, "wb") as d:
+                d.write(s.read())
+        except OSError:
+            continue
+        manifest[name] = {"hash": file_digest(dst), "installed": stamp}
+        copied.append(name)
+
+    if copied:
+        try:
+            atomic_write_json(manifest_path, manifest, keep_backup=False)
+        except OSError:
+            pass
+    return copied
+
+
+def save_default_filename_config(path=None):
+    path = path or FILENAME_CONFIG_FILE
     config = {
-        "filename_fields": DEFAULT_FILENAME_FIELDS,
+        "filename_fields": list(DEFAULT_FILENAME_FIELDS),
         "available_fields": list(FILENAME_FIELD_OPTIONS),
     }
     try:
-        with open(FILENAME_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
-            f.write("\n")
+        atomic_write_json(path, config, keep_backup=False)
     except OSError:
         pass

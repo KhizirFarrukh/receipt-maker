@@ -11,6 +11,8 @@ Plus a smoke test that the GUI still constructs.
 
 Run: python -m unittest discover -s tests
 """
+import contextlib
+import gc
 import os
 import sys
 import unittest
@@ -24,6 +26,34 @@ import cli  # noqa: E402
 FIX = os.path.join(PROJ, "tests", "fixtures")
 GOLDEN_INPUT = os.path.join(FIX, "golden_input.json")
 GOLDEN_HTML = os.path.join(FIX, "golden.html")
+
+
+@contextlib.contextmanager
+def receipt_app():
+    """Yield (app, root) on a withdrawn Tk root, torn down deterministically.
+
+    A tk.StringVar that is garbage-collected *after* its interpreter is gone
+    raises from Variable.__del__ and can abort the whole process with
+    "Tcl_AsyncDelete: async handler deleted by the wrong thread". Whether that
+    happens depends only on when the collector runs, so it stayed hidden while
+    this was the last test module and surfaced the moment another ran after it.
+    Releasing the app's widgets and variables while Tk is still alive makes
+    teardown independent of test ordering.
+    """
+    import tkinter as tk
+    import main
+
+    root = tk.Tk()
+    root.withdraw()
+    app = main.ReceiptApp(root)
+    try:
+        yield app, root
+    finally:
+        app.__dict__.clear()
+        del app
+        gc.collect()
+        root.destroy()
+        gc.collect()
 
 
 class Stage0Golden(unittest.TestCase):
@@ -72,11 +102,8 @@ class Stage0Fidelity(unittest.TestCase):
         data = cli.load_data(GOLDEN_INPUT)
         html_headless = cli.render_html_from_data(data, normalize=True)
 
-        root = tk.Tk()
-        root.withdraw()
         captured = {}
-        try:
-            app = main.ReceiptApp(root)
+        with receipt_app() as (app, root):
             # Capture the data the GUI collected; do not start the worker/Playwright.
             app._run_generation = lambda d, out_path: captured.update(data=d, out=out_path)
 
@@ -97,8 +124,6 @@ class Stage0Fidelity(unittest.TestCase):
                 ))
 
             app.generate_pdf()
-        finally:
-            root.destroy()
 
         self.assertIn("data", captured, "GUI never reached generation (validation failed)")
         d = captured["data"]
@@ -163,93 +188,75 @@ class Stage1GenerationUX(unittest.TestCase):
             time.sleep(0.005)
 
     def test_success_path(self):
-        import tkinter as tk
         import main
         import receipt_service
 
-        root = tk.Tk(); root.withdraw()
         orig_gen, orig_ask = receipt_service.generate, main.messagebox.askyesno
+        steps = []
+
+        def fake_generate(data, out_path, progress_cb=None):
+            for i in range(1, receipt_service.GENERATION_STEPS + 1):
+                if progress_cb:
+                    progress_cb(i, f"step {i}")
+                steps.append(i)
+            return True
+
         try:
-            app = main.ReceiptApp(root)
-            steps = []
-
-            def fake_generate(data, out_path, progress_cb=None):
-                for i in range(1, receipt_service.GENERATION_STEPS + 1):
-                    if progress_cb:
-                        progress_cb(i, f"step {i}")
-                    steps.append(i)
-                return True
-
             receipt_service.generate = fake_generate
             main.messagebox.askyesno = lambda *a, **k: False  # skip folder prompt
 
-            self.assertEqual(str(app.generate_button["state"]), "normal")
-            self._drive(app, root, os.path.join(PROJ, "invoices", "_uxtest.pdf"))
+            with receipt_app() as (app, root):
+                self.assertEqual(str(app.generate_button["state"]), "normal")
+                self._drive(app, root, os.path.join(PROJ, "invoices", "_uxtest.pdf"))
 
-            self.assertFalse(app._generating, "generation flag not reset")
-            self.assertEqual(str(app.generate_button["state"]), "normal", "button not re-enabled")
-            self.assertEqual(steps, [1, 2, 3, 4], "progress steps not reported")
-            self.assertIn("signed", app.status_label["text"])
+                self.assertFalse(app._generating, "generation flag not reset")
+                self.assertEqual(str(app.generate_button["state"]), "normal",
+                                 "button not re-enabled")
+                self.assertEqual(steps, [1, 2, 3, 4], "progress steps not reported")
+                self.assertIn("signed", app.status_label["text"])
         finally:
             receipt_service.generate, main.messagebox.askyesno = orig_gen, orig_ask
-            root.destroy()
 
     def test_error_path_shows_diagnostic(self):
-        import tkinter as tk
         import main
         import receipt_service
 
-        root = tk.Tk(); root.withdraw()
         orig_gen, orig_err = receipt_service.generate, main.show_error
         captured = {}
+
+        def boom(data, out_path, progress_cb=None):
+            raise RuntimeError("signing key not found")
+
         try:
-            app = main.ReceiptApp(root)
-
-            def boom(data, out_path, progress_cb=None):
-                raise RuntimeError("signing key not found")
-
             receipt_service.generate = boom
             main.show_error = lambda parent, title, summary, detail=None: captured.update(
                 title=title, summary=summary, detail=detail)
 
-            self._drive(app, root, os.path.join(PROJ, "invoices", "_uxtest.pdf"))
+            with receipt_app() as (app, root):
+                self._drive(app, root, os.path.join(PROJ, "invoices", "_uxtest.pdf"))
 
-            self.assertFalse(app._generating)
-            self.assertEqual(str(app.generate_button["state"]), "normal")
-            self.assertIn("signing key not found", captured.get("summary", ""))
-            self.assertIsNotNone(captured.get("detail"), "no traceback passed to show_error")
-            self.assertIn("PDF generation failed", app.status_label["text"])
+                self.assertFalse(app._generating)
+                self.assertEqual(str(app.generate_button["state"]), "normal")
+                self.assertIn("signing key not found", captured.get("summary", ""))
+                self.assertIsNotNone(captured.get("detail"),
+                                     "no traceback passed to show_error")
+                self.assertIn("PDF generation failed", app.status_label["text"])
         finally:
             receipt_service.generate, main.show_error = orig_gen, orig_err
-            root.destroy()
 
     def test_concurrent_guard(self):
-        import tkinter as tk
-        import main
-
-        root = tk.Tk(); root.withdraw()
-        try:
-            app = main.ReceiptApp(root)
+        with receipt_app() as (app, _root):
             app._generating = True  # pretend a job is in flight
             calls = []
             app.root.after = lambda *a, **k: calls.append(1)  # would schedule the poll loop
             app._run_generation(dict(self.DATA), "x.pdf")
             self.assertEqual(calls, [], "a second worker/poll was scheduled while generating")
-        finally:
-            root.destroy()
 
 
 class Stage0Smoke(unittest.TestCase):
     def test_app_constructs(self):
-        import tkinter as tk
-        import main
-
-        root = tk.Tk()
-        root.withdraw()
-        try:
-            main.ReceiptApp(root)  # __init__ must not raise
-        finally:
-            root.destroy()
+        with receipt_app() as (app, _root):   # __init__ must not raise
+            self.assertIsNotNone(app)
 
 
 if __name__ == "__main__":

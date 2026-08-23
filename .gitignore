@@ -248,3 +248,7 @@ temp/
 *.temp
 *.bak
 *.log
+
+# Runtime marker written when Templates/ is seeded beside the executable.
+# Holds the hashes recorded at copy time; it is per-install state, not source.
+Templates/.installed.json

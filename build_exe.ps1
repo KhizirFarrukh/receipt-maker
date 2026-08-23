@@ -32,8 +32,14 @@ if ($HasChromium) {
 Invoke-Native { python -m PyInstaller --clean --noconfirm receipt_maker.spec } "Building executable"
 
 $DistDir = Join-Path $ProjectRoot "dist\ReceiptGenerator"
-Copy-Item -LiteralPath (Join-Path $ProjectRoot "filename_config.json") -Destination $DistDir -Force
-Copy-Item -LiteralPath (Join-Path $ProjectRoot "appsettings.json") -Destination $DistDir -Force
+# Templates are NOT copied here on purpose. The app seeds DistDir\Templates from
+# the bundled read-only copies on first run and records their hashes in
+# Templates\.installed.json at that moment -- which is what later tells a user's
+# edit apart from an untouched default. Pre-copying them would skip the copy
+# step and leave no manifest.
+foreach ($f in @("filename_config.json", "appsettings.json")) {
+    Copy-Item -LiteralPath (Join-Path $ProjectRoot $f) -Destination $DistDir -Force
+}
 
 $InvoicesDir = Join-Path $DistDir "invoices"
 if (-not (Test-Path -LiteralPath $InvoicesDir)) {
@@ -58,8 +64,22 @@ Set-Content -LiteralPath (Join-Path $DistDir "README.txt") -Value $ReleaseReadme
 $ExePath = Join-Path $DistDir "ReceiptGenerator.exe"
 $SmokePdf = Join-Path $InvoicesDir "_packaged_smoke_test.pdf"
 Remove-Item -LiteralPath $SmokePdf -Force -ErrorAction SilentlyContinue
-$SmokeProcess = Start-Process -FilePath $ExePath -ArgumentList "--smoke-test" -WindowStyle Hidden -Wait -PassThru
+# Bounded wait. The exe is built windowed (console=False), so anything that pops
+# a dialog would block an unbounded -Wait forever and hang the build.
+$SmokeTimeoutMs = 180000
+$SmokeProcess = Start-Process -FilePath $ExePath -ArgumentList "--smoke-test" -WindowStyle Hidden -PassThru
+if (-not $SmokeProcess.WaitForExit($SmokeTimeoutMs)) {
+    try { $SmokeProcess.Kill() } catch { }
+    throw "Packaged executable smoke test did not finish within $($SmokeTimeoutMs / 1000)s; it was killed. Check $DistDir\logs\receipt-maker.log."
+}
+$SmokeProcess.WaitForExit()   # ensure ExitCode is populated before it is read
 if ($SmokeProcess.ExitCode -ne 0) {
+    $SmokeLog = Join-Path $DistDir "logs\receipt-maker.log"
+    if (Test-Path -LiteralPath $SmokeLog) {
+        Write-Host "--- smoke test log ---"
+        Get-Content -LiteralPath $SmokeLog -Tail 30
+        Write-Host "----------------------"
+    }
     throw "Packaged executable smoke test failed with exit code $($SmokeProcess.ExitCode)."
 }
 if (-not (Test-Path -LiteralPath $SmokePdf)) {

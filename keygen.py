@@ -25,6 +25,7 @@ Usage:
 import argparse
 import sys
 
+import config
 import receipt_signing
 
 
@@ -41,11 +42,31 @@ def main(argv=None):
         help="Optional passphrase to encrypt the private key. Put the same value in "
              "appsettings.json -> signing.key_passphrase.",
     )
+    parser.add_argument(
+        "--org-name", default=None,
+        help="Organization on the certificate. Defaults to signing.signer_name, then "
+             "company.name, from appsettings.json.",
+    )
+    parser.add_argument(
+        "--common-name", default=None,
+        help="Common Name on the certificate. Defaults to '<organization> Receipt Signing'.",
+    )
     args = parser.parse_args(argv)
+
+    # The certificate subject is the identity a verifier shows for the receipt,
+    # so take it from the store's own config rather than a hardcoded name.
+    org_name = args.org_name
+    if not org_name:
+        settings = config.load_app_settings()
+        org_name = (settings["signing"].get("signer_name", "")
+                    or settings["company"].get("name", ""))
+    org_name = (org_name or "").strip()
+    common_name = args.common_name or (f"{org_name} Receipt Signing" if org_name else None)
 
     try:
         key_path, cert_path = receipt_signing.generate_key_pair(
-            force=args.force, passphrase=args.passphrase
+            force=args.force, passphrase=args.passphrase,
+            common_name=common_name, org_name=org_name,
         )
     except FileExistsError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -57,6 +78,8 @@ def main(argv=None):
     print("Signing key pair created:")
     print(f"  private key : {key_path}")
     print(f"  certificate : {cert_path}")
+    print(f"  identity    : {common_name or receipt_signing.DEFAULT_CERT_COMMON_NAME} "
+          f"({org_name or receipt_signing.DEFAULT_CERT_ORG_NAME})")
     print()
     print("NEXT STEPS")
     print("  1. Keep private_key.pem SECRET. Do not share or commit it, and do not")

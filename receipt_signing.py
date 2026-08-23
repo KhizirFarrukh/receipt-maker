@@ -34,10 +34,19 @@ DEFAULT_KEY_PATH = os.path.join(SIGNING_DIR, "private_key.pem")
 DEFAULT_CERT_PATH = os.path.join(SIGNING_DIR, "certificate.pem")
 
 # ------------------- certificate identity -------------------
-CERT_COMMON_NAME = "Chawla Tech Receipt Signing"
-CERT_ORG_NAME = "Chawla Tech"
+# Neutral defaults: this module is white-label, and the store's identity is
+# passed in by the caller (keygen.py reads it from appsettings.json). Baking a
+# company name in here put the wrong name in the certificate subject of every
+# key generated from a config that said otherwise.
+DEFAULT_CERT_COMMON_NAME = "Receipt Signing"
+DEFAULT_CERT_ORG_NAME = "Your Company"
 CERT_VALIDITY_YEARS = 10
 RSA_KEY_SIZE = 3072  # broad verifier compatibility (incl. Adobe); one-time cost
+
+# Name of the PDF signature form field. Verification enumerates every embedded
+# signature regardless of field name, so changing this does not affect receipts
+# already signed under the old name.
+SIGNATURE_FIELD_NAME = "ReceiptSignature"
 
 # ------------------- verification verdicts -------------------
 VERIFIED = "verified"       # signed, intact, whole-file, and by the pinned cert
@@ -62,8 +71,14 @@ class VerifyResult:
 
 # ------------------- key generation -------------------
 def generate_key_pair(key_path=DEFAULT_KEY_PATH, cert_path=DEFAULT_CERT_PATH,
-                      force=False, passphrase=None):
-    """Create a private key + self-signed certificate. Returns (key_path, cert_path)."""
+                      force=False, passphrase=None,
+                      common_name=None, org_name=None):
+    """Create a private key + self-signed certificate. Returns (key_path, cert_path).
+
+    common_name / org_name become the certificate subject -- this is the identity
+    a verifier displays for the receipt, so callers should pass the store's real
+    name (keygen.py takes it from appsettings.json).
+    """
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -82,8 +97,10 @@ def generate_key_pair(key_path=DEFAULT_KEY_PATH, cert_path=DEFAULT_CERT_PATH,
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=RSA_KEY_SIZE)
 
     name = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, CERT_COMMON_NAME),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, CERT_ORG_NAME),
+        x509.NameAttribute(NameOID.COMMON_NAME,
+                           (common_name or "").strip() or DEFAULT_CERT_COMMON_NAME),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME,
+                           (org_name or "").strip() or DEFAULT_CERT_ORG_NAME),
     ])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
@@ -161,7 +178,7 @@ def sign_pdf(pdf_path, key_path, cert_path, *, passphrase=None, reason=None,
         )
 
     metadata = signers.PdfSignatureMetadata(
-        field_name="ChawlaTechSignature",
+        field_name=SIGNATURE_FIELD_NAME,
         subfilter=SigSeedSubFilter.PADES,
         reason=reason or None,
         location=location or None,

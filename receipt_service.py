@@ -7,8 +7,8 @@ call it headless. Behaviour matches the pre-refactor generate_pdf path.
 import os
 import re
 
+import config
 from config import (
-    OUTPUT_DIR,
     RECEIPT_TYPES,
     INVOICE_PREFIX_BASE,
     INVOICE_START_NUMBER,
@@ -85,8 +85,8 @@ def get_invoice_prefix(type_label):
 
 
 def get_next_invoice_number(prefix):
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
+    if not os.path.exists(config.OUTPUT_DIR):
+        os.makedirs(config.OUTPUT_DIR)
     max_num = INVOICE_START_NUMBER - 1
     letter = prefix[len(INVOICE_PREFIX_BASE):]
     # The online series also counts legacy unlettered INV-#### files
@@ -99,7 +99,7 @@ def get_next_invoice_number(prefix):
         rf"^{re.escape(INVOICE_PREFIX_BASE)}{letter_pattern}(\d+)(?:-.*)?\.pdf$",
         re.IGNORECASE,
     )
-    for fname in os.listdir(OUTPUT_DIR):
+    for fname in os.listdir(config.OUTPUT_DIR):
         match = pattern.match(fname)
         if match:
             num = int(match.group(1))
@@ -140,7 +140,7 @@ def next_available_pdf_path(base_filename):
     stem, ext = os.path.splitext(base_filename)
     n = 1
     while True:
-        candidate = os.path.join(OUTPUT_DIR, f"{stem}-{n}{ext}")
+        candidate = os.path.join(config.OUTPUT_DIR, f"{stem}-{n}{ext}")
         if not os.path.exists(candidate):
             return candidate
         n += 1
@@ -172,11 +172,29 @@ def render_pdf(body_html, pdf_path):
         },
     }
 
+    render_cfg = load_app_settings().get("render", {})
+    block_external = render_cfg.get("block_external_requests", True)
+    timeout_ms = render_cfg.get("timeout_ms", 30000)
+
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             try:
                 page = browser.new_page()
+                page.set_default_timeout(timeout_ms)
+                if block_external:
+                    # Receipts must render offline and identically on every
+                    # machine. Everything a receipt legitimately needs is already
+                    # inlined (images as data: URIs, fonts as base64), so any
+                    # remaining off-box request is either a template referencing
+                    # a CDN -- which would make output depend on the network --
+                    # or an exfiltration path. Abort them; local schemes stay.
+                    page.route(
+                        "**/*",
+                        lambda route: route.abort()
+                        if route.request.url.startswith(("http://", "https://", "ftp://"))
+                        else route.continue_(),
+                    )
                 page.set_content(body_html, wait_until="load")
                 page.pdf(**pdf_options)
             finally:

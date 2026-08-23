@@ -33,9 +33,17 @@ if not os.path.isdir(playwright_browser_dir):
         "Playwright Chromium is not installed. Run: python -m playwright install chromium"
     )
 
+if not os.path.isdir("Templates"):
+    raise SystemExit(
+        "Templates/ is missing. It holds the receipt layout the app renders from; "
+        "restore it from the repository before building."
+    )
+
 datas = [
-    ("header.html", "."),
-    ("footer.html", "."),
+    # Read-only defaults. config.install_default_templates() copies these next to
+    # the executable on first run and records their hashes, so the user gets an
+    # editable set and a later upgrade can tell edited files from stale defaults.
+    ("Templates", "Templates"),
     (playwright_browser_dir, "ms-playwright"),
 ] + playwright_datas + signing_datas
 

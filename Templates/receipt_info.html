@@ -1,0 +1,16 @@
+{{! template_api_version: 1 }}<div class="receipt-title">SALES RECEIPT</div>
+<div class="type-badge">{{type_badge}}</div>
+
+<table class="meta-table">
+    <tr>
+        <td><strong>Receipt No:</strong> {{invoice_no}}</td>
+        <td align="right"><strong>Date:</strong> {{date}}</td>
+    </tr>
+</table>
+
+<div class="customer-box">
+    <strong>Bill To:</strong><br/>
+    {{customer_name}}<br/>
+    {{#if customer_phone}}Phone: {{customer_phone}}<br/>{{/if}}
+    {{#if customer_email}}Email: {{customer_email}}{{/if}}
+</div>

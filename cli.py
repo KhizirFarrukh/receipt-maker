@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """Headless entry point for the receipt maker.
 
-STAGE 0 NOTE (temporary baseline harness). Because build_html still lives in
-main.py, importing this module pulls in tkinter, so the gate is not yet
-CI-hermetic. Stage 1 extracts receipt_service.py and drops the tkinter import;
-Stage 2 adds --check / --render / --preview / --doctor. For now only
---render-html is implemented (pure HTML, no Playwright).
+Imports no tkinter: since Stage 1 the renderer lives in receipt_render and
+headless generation in receipt_service, so this module -- and the golden gate
+built on it -- runs anywhere Python runs. Stage1Layering asserts that.
 
-The renderer is invoked exactly as the GUI invokes it: build_html only uses
-@staticmethods, so we can bypass ReceiptApp.__init__ (no widgets, no mainloop)
-and call the real, unmodified method. That keeps this harness faithful to the
-GUI's own output -- proven by the Stage 0 fidelity test.
+--render-html is the golden-diff target: it renders the receipt body exactly as
+the GUI's generation path does (both call receipt_render.build_html with the
+same data dict), which is what Stage0Fidelity proves. Still to come: --render
+(full pipeline), --preview, --check and --doctor in Stage 2.
 """
 import argparse
 import json
@@ -88,9 +86,53 @@ def render_html_from_data(data, *, freeze_date=None, invoice_number=None, normal
     return normalize_html(html) if normalize else html
 
 
+def run_check():
+    """Validate config and lint every template. Returns a process exit code.
+
+    Deliberately reports config and template problems separately: they have
+    different exit codes and different fixes, and a template lint needs the
+    config loaded first (the allowed-placeholder set depends on it).
+    """
+    import config
+
+    try:
+        settings = config.load_app_settings()
+    except config.ConfigError as exc:
+        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    print(f"config   OK  {config.APP_SETTINGS_FILE} "
+          f"(schema {settings.get(config.SCHEMA_VERSION_KEY)})")
+
+    import receipt_render
+    from template_engine import TemplateError
+    try:
+        receipt_render.clear_template_cache()
+        templates = receipt_render.load_templates(force=True)
+    except TemplateError as exc:
+        print(f"TEMPLATE ERROR: {exc}", file=sys.stderr)
+        return EXIT_TEMPLATE
+    for name in sorted(templates):
+        print(f"template OK  {name}")
+
+    # A template that compiles can still fail on real data (a |raw hole, a
+    # miscounted column), so finish by actually rendering something.
+    try:
+        receipt_render.build_html(
+            "INV-CHECK", "1 Jan 2026", "Check", "", "",
+            [{"sku": "", "desc": "check", "serial": "", "qty": 1,
+              "price": 1, "discount": 0, "tax": 0, "warranty": ""}],
+            "Online", 0,
+        )
+    except Exception as exc:
+        print(f"RENDER ERROR: {exc}", file=sys.stderr)
+        return EXIT_RENDER
+    print("render   OK  sample receipt rendered")
+    return EXIT_OK
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="cli", description="Receipt maker headless CLI (Stage 0 baseline harness)."
+        prog="cli", description="Receipt maker headless CLI."
     )
     parser.add_argument("--render-html", metavar="DATA_JSON",
                         help="Render receipt HTML from a data JSON file (no Playwright).")
@@ -99,14 +141,29 @@ def main(argv=None):
                         help="Override the receipt date string (determinism).")
     parser.add_argument("--invoice-number", metavar="STR",
                         help="Override the invoice number (determinism).")
+    parser.add_argument("--check", action="store_true",
+                        help="Load and validate the config and lint every template. "
+                             "Non-zero exit on any problem.")
     parser.add_argument("--config-dir", metavar="DIR",
-                        help="Config/output root (reserved; takes effect once config.py lands in Stage 2).")
+                        help="Config/output root to use instead of the directory beside the "
+                             "app. Required for a hermetic gate -- otherwise a check runs "
+                             "against whatever is in the developer's own APP_DIR.")
     parser.add_argument("--raw", action="store_true",
                         help="Do not normalize the machine-specific <base href>.")
     args = parser.parse_args(argv)
 
+    if args.config_dir:
+        import config
+        if not os.path.isdir(args.config_dir):
+            print(f"ERROR: --config-dir is not a directory: {args.config_dir}", file=sys.stderr)
+            return EXIT_CONFIG
+        config.set_app_dir(args.config_dir)
+
+    if args.check:
+        return run_check()
+
     if not args.render_html:
-        parser.error("Stage 0 supports only --render-html; more commands arrive with Stage 1/2.")
+        parser.error("nothing to do: pass --render-html DATA_JSON or --check")
 
     try:
         data = load_data(args.render_html)
