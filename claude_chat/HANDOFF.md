@@ -2,8 +2,8 @@
 
 **Purpose of this file:** a complete context dump so that if this chat is lost, a fresh AI agent
 can read this document (+ [`PLAN-generalization.md`](PLAN-generalization.md) in the same folder) and
-continue the work exactly where it was left off — currently: **Stages 2 and 3 are done; Stage 4
-is next.**
+continue the work exactly where it was left off — currently: **Stages 2, 3 and 4 are done;
+Stage 5 is next.**
 
 **Read order for a new agent:** (1) this file top-to-bottom, (2) `PLAN-generalization.md` (the full
 approved plan / roadmap), (3) [`TASKS.md`](TASKS.md) (what the 2026-08-22/23 session did, and the
@@ -53,11 +53,26 @@ repository's templates stop reaching the tests and the golden validates a stale 
 `.gitignore` carries negations for `tests/fixtures/env/`, because the generic `ENV/` virtualenv
 rule matches it and would otherwise keep the whole fixture out of the repository.
 
-**Next: Stage 4** — the invoice counter migration. The plan is emphatic that this is the riskiest
-correctness change and gets its own isolated gate: an atomic counter file seeded from the current
-max, filename scanning demoted to a reconciliation warning, and an O_EXCL/single-instance guard.
-Numbering is still filename-derived today. Note Stage 5 (custom fields) will finally remove the
-`NO_WARRANTY_LABEL` sentinel that `receipt_render` and the GUI currently share.
+**Stage 4 is complete.** `invoice_counter.py` owns the sequence; the counter file is seeded from
+the highest existing filename so no number moved. Config schema is now **4**. The rules, which a
+later change must not casually relax:
+
+- **Reserve-and-keep** — the number is consumed *before* rendering so two processes cannot share
+  one, and it stays consumed if the render fails. Giving it back reopens the race. Gaps are
+  logged via `note_unused()`.
+- **Reconciliation is one-directional** — files ahead pull the counter forward; files behind only
+  warn. Following the filenames downward is exactly how a duplicate gets issued.
+- **A corrupt counter file refuses to load** rather than starting a fresh sequence.
+- The PDF is rendered and signed as a `.partial` and `os.replace`d into place, so a failed run
+  never creates the receipt at all.
+
+Tests: **212**. The concurrency test spawns 4 real OS processes taking 100 numbers between them
+and asserts they come back contiguous with no duplicates — keep it, it is the only thing actually
+proving the lock works.
+
+**Next: Stage 5** — custom fields + configurable warranty (`fields.json`, the item dialog built
+from field definitions, `#`-prompting warranty options). That stage removes the
+`NO_WARRANTY_LABEL` sentinel `receipt_render` and the GUI currently share.
 
 ---
 

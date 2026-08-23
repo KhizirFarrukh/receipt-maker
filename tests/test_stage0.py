@@ -115,7 +115,11 @@ class Stage0Fidelity(unittest.TestCase):
         captured = {}
         with receipt_app() as (app, root):
             # Capture the data the GUI collected; do not start the worker/Playwright.
-            app._run_generation = lambda d, out_path: captured.update(data=d, out=out_path)
+            app._run_generation = lambda d, out_path, reserved=None: captured.update(
+                data=d, out=out_path)
+            # This test is about the collected data, not numbering. Stub the claim
+            # so it neither consumes an invoice number nor writes a counter file.
+            app._claim_invoice_number = lambda typed: (typed, None)
 
             a = cli._to_build_html_args(data)
             app.receipt_type.set(a["receipt_type"])

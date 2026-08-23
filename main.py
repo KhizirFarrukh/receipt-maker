@@ -19,6 +19,7 @@ import threading
 import traceback
 
 import config  # noqa: F401  (import sets frozen PLAYWRIGHT_BROWSERS_PATH)
+import invoice_counter
 import receipt_render
 import receipt_service
 import receipt_signing
@@ -313,9 +314,14 @@ class ReceiptApp:
 
     # ------------------- invoice numbering -------------------
     def refresh_invoice_number(self):
+        """Show the number this series would issue next, without consuming it.
+
+        Only generate_pdf reserves. Opening the app or flipping receipt type must
+        not burn a number -- gaps in an invoice sequence have to be explainable.
+        """
         prefix = receipt_service.get_invoice_prefix(self.receipt_type.get())
-        next_num = receipt_service.get_next_invoice_number(prefix)
-        self.inv_no.set(f"{prefix}{next_num}")
+        self._suggested_inv_no = f"{prefix}{receipt_service.get_next_invoice_number(prefix)}"
+        self.inv_no.set(self._suggested_inv_no)
 
     # ------------------- date picker -------------------
     def parse_selected_date(self):
@@ -626,6 +632,29 @@ class ReceiptApp:
         self.status_label.config(text="Form cleared")
 
     # ------------------- PDF generation -------------------
+    def _claim_invoice_number(self, typed):
+        """Settle on the invoice number to issue. Returns (number, reserved_code).
+
+        If the field still holds what the form suggested, the number is reserved
+        atomically -- which may return a *different* number if another process
+        took that one meanwhile, and that is the point.
+
+        If the user typed their own, it is honoured verbatim, and the counter is
+        pushed past it so the app never hands the same number out again.
+        ``reserved_code`` is the series a number was consumed from, or None, so a
+        failed generation can log the gap it leaves.
+        """
+        prefix = receipt_service.get_invoice_prefix(self.receipt_type.get())
+        code = receipt_service.series_code(prefix)
+
+        if typed == getattr(self, "_suggested_inv_no", None):
+            return f"{prefix}{receipt_service.reserve_invoice_number(prefix)}", code
+
+        match = re.match(rf"^{re.escape(prefix)}(\d+)$", typed, re.IGNORECASE)
+        if match:
+            invoice_counter.claim_at_least(code, int(match.group(1)))
+        return typed, None
+
     def generate_pdf(self):
         inv_no = self.inv_no.get().strip()
         if not inv_no:
@@ -674,6 +703,16 @@ class ReceiptApp:
             messagebox.showerror("Error", "At least one item is required.")
             return
 
+        # Claim the number now, before anything can fail. Two app instances (or
+        # the app and the CLI) must never be handed the same one, and the only
+        # way to guarantee that is to consume it up front rather than on success.
+        try:
+            inv_no, reserved = self._claim_invoice_number(inv_no)
+        except Exception as exc:
+            show_error(self.root, "Could not reserve an invoice number", str(exc),
+                       traceback.format_exc())
+            return
+
         data = {
             "inv_no": inv_no,
             "date_str": date_str,
@@ -704,9 +743,9 @@ class ReceiptApp:
             if not answer:  # No -> keep the existing file, save a numbered copy
                 pdf_path = receipt_service.next_available_pdf_path(base_filename)
 
-        self._run_generation(data, pdf_path)
+        self._run_generation(data, pdf_path, reserved)
 
-    def _run_generation(self, data, out_path):
+    def _run_generation(self, data, out_path, reserved_code=None):
         """Generate on a worker thread behind a modal progress dialog.
 
         The main window is locked and the Generate button disabled for the
@@ -770,6 +809,12 @@ class ReceiptApp:
                         close_dialog()
                         self.status_label.config(text="PDF generation failed")
                         logger.error("Generation failed for %s", out_path)
+                        if reserved_code:
+                            # The number stays consumed on purpose -- handing it
+                            # back would reopen the race the reservation closes.
+                            # Record the gap so it can be explained later.
+                            invoice_counter.note_unused(
+                                reserved_code, data.get("inv_no", ""), str(exc))
                         show_error(self.root, "Receipt generation failed", str(exc), tb)
                         return
             except queue.Empty:

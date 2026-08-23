@@ -262,6 +262,8 @@ Templates/.installed.json
 
 # ...but the parts of it that are generated at runtime stay untracked. These
 # must follow the negation above to win: the Templates/ copy seeded on first
-# use, and the .bak files migration leaves behind.
+# use, the .bak files migration leaves behind, and the invoices/ folder the
+# counter is written into.
 tests/fixtures/env/Templates/
+tests/fixtures/env/invoices/
 tests/fixtures/env/*.bak

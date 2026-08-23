@@ -196,6 +196,46 @@ unit tests instead. The golden's job is catching regressions, not advertising de
    pinned gate fixture would never have been committed and a fresh clone's gate would fail.
    Negation rules added, ordered after the rule they undo.
 
+## Phase F — Stage 4 (invoice counter migration, isolated)
+
+Spec: PLAN-generalization.md §"Stage 4" and §"Invoice numbering, migration & compatibility".
+The plan calls this the riskiest correctness change and insists it ships alone with its own gate.
+**Duplicate invoice numbers on a legal document are the failure mode to design against.**
+
+Why it is needed: numbering is derived by scanning PDF filenames. Once filenames become
+configurable (Stage 8) a reordered or renamed pattern the scanner cannot parse silently resets
+numbering to the start — reissuing numbers that are already on customers' receipts.
+
+- [x] F1. `invoice` config block (`prefix`, `start`, `counter_file`,
+      `reconcile_with_filenames`); migration v3→v4 preserves `INV-` and the start verbatim.
+      `validate()` also rejects a prefix ending in a digit — `INV1` + `1001` reads as `INV11001`,
+      and the boundary can never be recovered from the filename.
+- [x] F2. `invoice_counter.py` — counter file is the source of truth, seeded from the current
+      filename maximum so the next number does not move. `peek()` reads without consuming,
+      `reserve()` consumes under an `O_EXCL` lock with stale-lock recovery.
+- [x] F3. Reserve-and-keep, with `note_unused()` logging every burned number and its reason.
+- [x] F4. Reconciliation is one-directional: files ahead pull the counter forward, files behind
+      only warn. A corrupt counter file **refuses to load** rather than silently restarting the
+      sequence — restarting is precisely how duplicates get issued.
+- [x] F5. Atomic PDF write — render and sign a `.partial` in the target directory, then
+      `os.replace`. A failed run now never creates the receipt at all, instead of creating one
+      and deleting it afterwards.
+- [x] F6. The editable invoice-number field still works: a hand-typed number is honoured and
+      `claim_at_least()` pushes the counter past it.
+- [x] F7. **31 Stage 4 tests**, including 100 reservations across 4 real OS processes coming back
+      contiguous with no duplicates.
+- [x] F8. Gate: 212 tests green, golden byte-identical, `--check` clean, real PDF renders, full
+      sign/verify matrix still correct, packaged build.
+
+*Deferred with reason:* `validate()` enforcing an invoice-number token in filename patterns is on
+the Stage 4 list, but filename *patterns* do not exist yet — the filename is built from an ordered
+field list with the number always first, so there is no token to require. It belongs with Stage 8.
+
+*Deferred with reason:* `validate()` enforcing an invoice-number token in filename patterns is in
+the Stage 4 list, but filename *patterns* do not exist yet — filenames are built from an ordered
+field list with the number always first, so there is no token to require. It belongs with Stage 8,
+where patterns are introduced.
+
 ## State left behind
 
 - Working tree is **uncommitted** on branch `generalization` (auto-commit is not running in this
@@ -211,12 +251,12 @@ unit tests instead. The golden's job is catching regressions, not advertising de
   checks used a throwaway key in a temp directory precisely so key creation stays the owner's.
   Set `signing.signer_name` in `appsettings.json` *before* running it.
 
-## Open items for Stage 4+
+## Open items for Stage 5+
 
-- **Invoice numbering is still filename-derived.** Stage 4, and the plan is explicit that it is
-  the riskiest correctness change and must be done alone with its own gate: atomic counter file
-  seeded from the current max, filename scanning demoted to a reconciliation warning, O_EXCL
-  single-instance guard.
+- **Stage 5 — custom fields + configurable warranty** is next: `fields.json`-driven receipt and
+  line-item fields, the item dialog building itself from field definitions, and a warranty option
+  list where an option containing `#` prompts for a positive whole number. That last one finally
+  removes `NO_WARRANTY_LABEL`, the sentinel `receipt_render` and the GUI currently share.
 - Store-specific copy still lives in `Templates/terms.html` and `Templates/footer.html` (Chawla
   Tech wording, chawlatech.pk links). These are now plain editable templates, so this is a
   content edit rather than a code change — but shipping them as the neutral default is still

@@ -2,16 +2,20 @@
 
 Extracted from ReceiptApp in Stage 1 so generation runs without tkinter -- the
 GUI (main.py) collects data and calls generate() on a worker thread; cli.py can
-call it headless. Behaviour matches the pre-refactor generate_pdf path.
+call it headless.
+
+Numbering lives in invoice_counter; this module only translates a receipt-type
+label into a series. Note the split between get_next_invoice_number (a peek, for
+displaying a suggestion) and reserve_invoice_number (which consumes) -- calling
+the wrong one either burns numbers on every form refresh or lets two processes
+issue the same one.
 """
 import os
 import re
 
 import config
+import invoice_counter
 from config import (
-    RECEIPT_TYPES,
-    INVOICE_PREFIX_BASE,
-    INVOICE_START_NUMBER,
     PDF_MARGIN_TOP,
     PDF_MARGIN_BOTTOM,
     PDF_MARGIN_LEFT,
@@ -80,42 +84,35 @@ def sign_receipt_pdf(pdf_path):
 
 
 # ------------------- invoice numbering -------------------
+def receipt_type_code(type_label):
+    return config.receipt_type_by_label(type_label)["code"]
+
+
 def get_invoice_prefix(type_label):
-    return f"{INVOICE_PREFIX_BASE}{config.receipt_type_by_label(type_label)['code']}"
+    return f"{invoice_counter.invoice_prefix()}{receipt_type_code(type_label)}"
 
 
-def _claims_legacy_unlettered(letter):
-    """Whether this series also counts the old unlettered INV-#### files.
-
-    Those predate receipt types, so exactly one series inherits them; validate()
-    enforces that only one type may claim them.
-    """
-    for entry in config.receipt_types():
-        if str(entry.get("code", "")).upper() == letter.upper():
-            return bool(entry.get("legacy_unlettered"))
-    return False
+def series_code(prefix):
+    """The series letter inside a full prefix, e.g. 'INV-W' -> 'W'."""
+    base = invoice_counter.invoice_prefix()
+    return prefix[len(base):] if prefix.startswith(base) else prefix
 
 
 def get_next_invoice_number(prefix):
-    if not os.path.exists(config.OUTPUT_DIR):
-        os.makedirs(config.OUTPUT_DIR)
-    max_num = INVOICE_START_NUMBER - 1
-    letter = prefix[len(INVOICE_PREFIX_BASE):]
-    if _claims_legacy_unlettered(letter):
-        letter_pattern = f"{re.escape(letter)}?"
-    else:
-        letter_pattern = re.escape(letter)
-    pattern = re.compile(
-        rf"^{re.escape(INVOICE_PREFIX_BASE)}{letter_pattern}(\d+)(?:-.*)?\.pdf$",
-        re.IGNORECASE,
-    )
-    for fname in os.listdir(config.OUTPUT_DIR):
-        match = pattern.match(fname)
-        if match:
-            num = int(match.group(1))
-            if num > max_num:
-                max_num = num
-    return max_num + 1
+    """The number this series would issue next, WITHOUT consuming it.
+
+    Safe to call whenever the form refreshes -- opening the app or switching
+    receipt type must not burn a number. Generation calls reserve_invoice_number
+    instead.
+    """
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+    return invoice_counter.peek(series_code(prefix))
+
+
+def reserve_invoice_number(prefix):
+    """Atomically consume the next number for this series and return it."""
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+    return invoice_counter.reserve(series_code(prefix))
 
 
 # ------------------- output filenames -------------------
@@ -239,17 +236,22 @@ def generate(data, out_path, progress_cb=None):
         data.get("shipping", 0.0),
     )
 
+    # Render and sign a temp file in the same directory, then move it into place
+    # in one atomic step. A failed or interrupted run therefore never creates the
+    # receipt at all, rather than creating one and deleting it afterwards -- and
+    # nothing can observe a half-written or unsigned file under its final name.
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    tmp_path = f"{out_path}.{os.getpid()}.partial"
     try:
         report(2, "Rendering PDF...")
-        render_pdf(html, out_path)
+        render_pdf(html, tmp_path)
         report(3, "Signing...")
-        signed = sign_receipt_pdf(out_path)
+        signed = sign_receipt_pdf(tmp_path)
+        os.replace(tmp_path, out_path)
     except Exception:
-        # If rendering or signing failed, remove the file so a non-authentic
-        # receipt is never left behind.
-        if os.path.exists(out_path):
+        if os.path.exists(tmp_path):
             try:
-                os.remove(out_path)
+                os.remove(tmp_path)
             except OSError:
                 pass
         raise

@@ -394,7 +394,7 @@ class MigrationToV3(unittest.TestCase):
         settings, changed = config.migrate(v2)
 
         self.assertTrue(changed)
-        self.assertEqual(settings[config.SCHEMA_VERSION_KEY], 3)
+        self.assertEqual(settings[config.SCHEMA_VERSION_KEY], config.SCHEMA_VERSION)
         self.assertEqual(settings["currency"]["symbol"], "Rs.")
         self.assertTrue(settings["currency"]["symbol_space"])
         self.assertFalse(settings["currency"]["group_line_amounts"],
@@ -419,7 +419,7 @@ class MigrationToV3(unittest.TestCase):
                         "email": "e@x.c", "logo_path": ""},
         })
         self.assertTrue(changed)
-        self.assertEqual(settings[config.SCHEMA_VERSION_KEY], 3)
+        self.assertEqual(settings[config.SCHEMA_VERSION_KEY], config.SCHEMA_VERSION)
         self.assertEqual(settings["company"]["name"], "Acme")
         self.assertEqual(settings["currency"]["symbol"], "Rs.")
 

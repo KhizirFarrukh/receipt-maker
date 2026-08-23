@@ -217,6 +217,7 @@ Edit `appsettings.json` to change the business details shown in the receipt head
 - `date_format` — strftime pattern for the date on the receipt and in filenames, e.g.
   `"%d %b %Y"` → `31 Jan 2026`, `"%Y-%m-%d"` → `2026-01-31`.
 - `receipt_types` — see [Receipt types](#receipt-types).
+- `invoice` — see [Invoice numbering](#invoice-numbering).
 - `terms_page` — `{"enabled": true}`. Set `false` to drop the Warranty & Returns page; edit its
   wording in `Templates/terms.html`.
 - `document` — PDF page margins. `margin_top` / `margin_bottom` must reserve room for the page
@@ -296,6 +297,42 @@ becomes part of the invoice number (`INV-W1001`). Add an entry to add a type.
 **Changing an existing `code` starts a new number series** — previously issued `INV-W####` files
 stop being counted, so the next number would restart. `legacy_unlettered` marks the one series
 that also counts pre-versioning `INV-####` files; only one type may claim them.
+
+### Invoice numbering
+
+```json
+"invoice": {
+  "prefix": "INV-",
+  "start": 1001,
+  "counter_file": "invoices/.counters.json",
+  "reconcile_with_filenames": true
+}
+```
+
+Each receipt type has its own series (`INV-W1001`, `INV-S1001`). The counter file holds the next
+number for each and is created automatically, **seeded from the highest number already present in
+`invoices/`** — so upgrading does not shift your sequence.
+
+Earlier versions worked the number out by scanning PDF filenames each time. That is safe only
+while filenames are fixed: once they are configurable, a renamed file the scanner cannot parse
+makes it find nothing and restart at `start`, reissuing numbers already on customers' receipts.
+The counter file now owns the sequence and the filename scan is only a cross-check.
+
+Two consequences worth knowing about:
+
+- **A number is claimed before the receipt is rendered**, so two open copies of the app — or the
+  app and a command-line run — can never be handed the same one. If generation then fails, the
+  number is **not** reused; giving it back would reopen that race. This leaves occasional gaps,
+  and every one is recorded in the log with the reason.
+- **Deleting or renaming a receipt does not free its number.** The counter only ever moves
+  forward. If it finds files *ahead* of it (a restored backup, say) it jumps forward to match, and
+  logs that it did.
+
+Set `reconcile_with_filenames` to `false` to skip the cross-check entirely and let the counter
+alone decide. Changing `prefix` starts a fresh series, since existing files stop matching.
+
+If the counter file is ever corrupted the app refuses to run rather than starting a new sequence —
+delete it to have the sequence rebuilt from the receipts on disk.
 
 ### Wording
 

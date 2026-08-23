@@ -15,6 +15,7 @@ Governing rules this file implements (PLAN-generalization.md):
 import datetime
 import json
 import os
+import re
 import sys
 
 # ------------------- file paths -------------------
@@ -110,7 +111,7 @@ DEFAULT_FILENAME_FIELDS = ["date", "name"]
 # ------------------- schema -------------------
 #: Bumped whenever appsettings.json is *restructured*. Adding a key with a
 #: default does not need a bump -- deep-merge already fills it in.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SCHEMA_VERSION_KEY = "schema_version"
 
 TAX_MODES = ("exclusive", "inclusive")
@@ -184,6 +185,20 @@ DEFAULT_APP_SETTINGS = {
         "margin_bottom": PDF_MARGIN_BOTTOM,
         "margin_left": PDF_MARGIN_LEFT,
         "margin_right": PDF_MARGIN_RIGHT,
+    },
+    # Invoice numbering. `counter_file` is the source of truth: it is seeded from
+    # the highest number already present in invoices/ and then owns the sequence,
+    # because deriving numbers by scanning filenames breaks the moment filenames
+    # become configurable -- an unparseable pattern would silently restart at
+    # `start` and reissue numbers that are already on customers' receipts.
+    # `reconcile_with_filenames` keeps the old scan as a cross-check that warns
+    # on disagreement instead of driving the sequence.
+    # Changing `prefix` starts a new series; existing files stop being counted.
+    "invoice": {
+        "prefix": INVOICE_PREFIX_BASE,
+        "start": INVOICE_START_NUMBER,
+        "counter_file": "invoices/.counters.json",
+        "reconcile_with_filenames": True,
     },
     # Document-level tax, applied on top of (or backed out of) the line totals.
     #   mode "exclusive" -- tax is added to the subtotal (US/UK-style quoting)
@@ -362,6 +377,17 @@ def migrate(raw, filename=None):
         migrated[SCHEMA_VERSION_KEY] = 3
         changed = True
 
+    if version < 4:
+        # v3 -> v4: numbering moves from "scan the filenames" to a counter file.
+        # The prefix and start carry over verbatim -- changing either would orphan
+        # every INV-#### file already issued and restart the sequence. The counter
+        # itself is seeded from the existing filenames the first time it is used,
+        # which is what keeps the next number identical across this migration.
+        if "invoice" not in migrated:
+            migrated["invoice"] = dict(DEFAULT_APP_SETTINGS["invoice"])
+        migrated[SCHEMA_VERSION_KEY] = 4
+        changed = True
+
     settings = deep_merge(DEFAULT_APP_SETTINGS, migrated)
     if settings != migrated:
         changed = True
@@ -433,6 +459,34 @@ def validate(settings, filename=None):
             raise ConfigError(
                 f"must be one of {', '.join(allowed)} (got {value!r})",
                 filename, f"currency.{key}")
+
+    invoice = settings.get("invoice")
+    if not isinstance(invoice, dict):
+        raise ConfigError("must be an object", filename, "invoice")
+    prefix = invoice.get("prefix", INVOICE_PREFIX_BASE)
+    if not isinstance(prefix, str):
+        raise ConfigError("must be text", filename, "invoice.prefix")
+    if re.search(r'[<>:"/\\|?*]', prefix):
+        raise ConfigError(
+            f"must not contain characters a filename cannot hold (got {prefix!r})",
+            filename, "invoice.prefix")
+    if prefix and prefix[-1:].isdigit():
+        raise ConfigError(
+            f"must not end in a digit (got {prefix!r}) -- the number is appended "
+            f"directly, so the boundary between prefix and number would be "
+            f"ambiguous when reading a receipt back",
+            filename, "invoice.prefix")
+    start = invoice.get("start", INVOICE_START_NUMBER)
+    if isinstance(start, bool) or not isinstance(start, int) or start < 0:
+        raise ConfigError(
+            "must be a non-negative whole number", filename, "invoice.start")
+    if not str(invoice.get("counter_file", "")).strip():
+        raise ConfigError(
+            "must name the file that stores the invoice sequence",
+            filename, "invoice.counter_file")
+    if not isinstance(invoice.get("reconcile_with_filenames", True), bool):
+        raise ConfigError(
+            "must be true or false", filename, "invoice.reconcile_with_filenames")
 
     tax = settings.get("tax")
     if not isinstance(tax, dict):
