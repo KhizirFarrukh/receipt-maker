@@ -1,0 +1,30 @@
+# Line endings are *content* in this repo, not formatting.
+#
+# tests/fixtures/golden.html is compared byte-for-byte by the Stage 0 regression
+# gate, and the renderer always emits LF. Git's Windows default
+# (core.autocrlf=true) rewrites it to CRLF on checkout, so without this file a
+# fresh Windows clone fails its own gate before a line of code is touched.
+#
+# Stage 2 additionally hashes the shipped templates into
+# Templates/.installed.json at first-run copy time to tell "user edited this"
+# from "last version's default". Those hashes must be identical on every
+# machine, which they are not if checkout rewrites line endings.
+
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF so they behave under any host shell.
+*.ps1  text eol=crlf
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# Never touched by end-of-line conversion.
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
