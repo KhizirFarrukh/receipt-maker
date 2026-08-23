@@ -252,3 +252,16 @@ temp/
 # Runtime marker written when Templates/ is seeded beside the executable.
 # Holds the hashes recorded at copy time; it is per-install state, not source.
 Templates/.installed.json
+
+# The pinned gate fixture lives in a directory named "env", which the generic
+# virtualenv rules above (env/, ENV/) match -- so without this negation it would
+# never be committed, and a fresh clone would have no config for the golden gate
+# to render against. Negations must come after the rule they undo.
+!tests/fixtures/env/
+!tests/fixtures/env/*
+
+# ...but the parts of it that are generated at runtime stay untracked. These
+# must follow the negation above to win: the Templates/ copy seeded on first
+# use, and the .bak files migration leaves behind.
+tests/fixtures/env/Templates/
+tests/fixtures/env/*.bak

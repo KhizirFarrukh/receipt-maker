@@ -81,7 +81,19 @@ def sign_receipt_pdf(pdf_path):
 
 # ------------------- invoice numbering -------------------
 def get_invoice_prefix(type_label):
-    return f"{INVOICE_PREFIX_BASE}{RECEIPT_TYPES[type_label]}"
+    return f"{INVOICE_PREFIX_BASE}{config.receipt_type_by_label(type_label)['code']}"
+
+
+def _claims_legacy_unlettered(letter):
+    """Whether this series also counts the old unlettered INV-#### files.
+
+    Those predate receipt types, so exactly one series inherits them; validate()
+    enforces that only one type may claim them.
+    """
+    for entry in config.receipt_types():
+        if str(entry.get("code", "")).upper() == letter.upper():
+            return bool(entry.get("legacy_unlettered"))
+    return False
 
 
 def get_next_invoice_number(prefix):
@@ -89,9 +101,7 @@ def get_next_invoice_number(prefix):
         os.makedirs(config.OUTPUT_DIR)
     max_num = INVOICE_START_NUMBER - 1
     letter = prefix[len(INVOICE_PREFIX_BASE):]
-    # The online series also counts legacy unlettered INV-#### files
-    # (those belong to online); the in-store series counts only its own.
-    if letter.upper() == RECEIPT_TYPES["Online"]:
+    if _claims_legacy_unlettered(letter):
         letter_pattern = f"{re.escape(letter)}?"
     else:
         letter_pattern = re.escape(letter)

@@ -278,16 +278,8 @@ def build_page_footer_template():
 
 
 # ------------------- amounts (Decimal end to end) -------------------
-# Stage 3 replaces these two with the `currency` config block (symbol, code,
-# decimals, position, group_style, negative_style). Until then they reproduce
-# today's output exactly -- including the fact that line cells are ungrouped
-# ("Rs. 17000.00") while totals are grouped ("Rs. 22,450.00").
-CURRENCY_SYMBOL = "Rs. "
+#: Fallback precision when no currency config is supplied.
 AMOUNT_DECIMALS = 2
-
-def _quant():
-    """Read AMOUNT_DECIMALS at call time so Stage 3 (and tests) can vary it."""
-    return Decimal(1).scaleb(-AMOUNT_DECIMALS)
 
 
 def to_decimal(value):
@@ -300,36 +292,91 @@ def to_decimal(value):
         return Decimal("0")
 
 
-def quantize(value):
+def quantize(value, decimals=None):
     """Round to the display precision, half-up (what a till receipt does)."""
-    return to_decimal(value).quantize(_quant(), rounding=ROUND_HALF_UP)
+    places = AMOUNT_DECIMALS if decimals is None else decimals
+    return to_decimal(value).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
 
 
-def format_amount(value, group=False):
-    """Format an amount for display, e.g. 'Rs. 22,450.00'."""
-    amount = quantize(value)
-    number = f"{amount:,.{AMOUNT_DECIMALS}f}" if group else f"{amount:.{AMOUNT_DECIMALS}f}"
-    return f"{CURRENCY_SYMBOL}{number}"
+def group_digits(digits, style="thousand"):
+    """Insert digit-group separators into a run of integer digits.
+
+    ``indian`` is the South-Asian lakh/crore convention: the last three digits
+    form one group and everything above it is grouped in pairs (12,34,567),
+    which is what a receipt issued in PKR or INR is expected to look like.
+    """
+    if style == "none" or len(digits) <= 3:
+        return digits
+    if style == "indian":
+        head, tail = digits[:-3], digits[-3:]
+        parts = []
+        while len(head) > 2:
+            head, pair = head[:-2], head[-2:]
+            parts.insert(0, pair)
+        if head:
+            parts.insert(0, head)
+        return ",".join(parts + [tail])
+    parts = []                                   # "thousand"
+    while len(digits) > 3:
+        digits, chunk = digits[:-3], digits[-3:]
+        parts.insert(0, chunk)
+    return ",".join([digits] + parts)
+
+
+def format_amount(value, currency=None, group=True):
+    """Render one amount per the currency config: '$12.00', 'Rs. 22,450.00', '($5.00)'.
+
+    ``group`` lets the caller suppress digit grouping for line-item cells, which
+    is how an install that predates configurable currency keeps printing
+    "Rs. 17000.00" in the item table while its totals stay grouped.
+    """
+    currency = currency or {}
+    decimals = currency.get("decimals", AMOUNT_DECIMALS)
+    amount = quantize(value, decimals)
+    negative = amount < 0
+
+    plain = f"{abs(amount):.{decimals}f}"
+    integer, _, fraction = plain.partition(".")
+    number = group_digits(integer, currency.get("group_style", "thousand") if group else "none")
+    if fraction:
+        number = f"{number}.{fraction}"
+
+    symbol = str(currency.get("symbol", ""))
+    if symbol:
+        gap = " " if currency.get("symbol_space", False) else ""
+        if currency.get("position", "prefix") == "suffix":
+            number = f"{number}{gap}{symbol}"
+        else:
+            number = f"{symbol}{gap}{number}"
+
+    if not negative:
+        return number
+    if currency.get("negative_style", "minus") == "parentheses":
+        return f"({number})"
+    return f"-{number}"
 
 
 # ------------------- line-item columns -------------------
-# (key, heading, css class, optional). "optional" columns appear only when at
-# least one line uses them. The renderer walks this list for both the header and
-# every row, so adding or hiding a column needs no template edit -- which is what
-# lets Stage 5 drive it from fields.json.
+# (key, css class, optional). "optional" columns appear only when at least one
+# line uses them. Headings come from strings.json, not from here (principle 3).
+# The renderer walks this list for both the header row and every body row, so
+# adding or hiding a column needs no template edit -- which is what lets Stage 5
+# drive it from fields.json.
 ITEM_COLUMNS = (
-    ("sku",      "SKU",              "",    False),
-    ("desc",     "Item Description", "",    False),
-    ("serial",   "Serial Number",    "",    False),
-    ("qty",      "Qty",              "num", False),
-    ("price",    "Unit Price",       "num", False),
-    ("discount", "Discount",         "num", True),
-    ("tax",      "Tax",              "num", True),
-    ("amount",   "Amount",           "num", False),
+    ("sku",      "",    False),
+    ("desc",     "",    False),
+    ("serial",   "",    False),
+    ("qty",      "num", False),
+    ("price",    "num", False),
+    ("discount", "num", True),
+    ("tax",      "num", True),
+    ("amount",   "num", False),
 )
 
+#: Sentinel meaning "print no warranty note for this line". Shared with the GUI's
+#: warranty dropdown, which writes this exact text; Stage 5 replaces both with a
+#: configurable option list, at which point this goes away.
 NO_WARRANTY_LABEL = "No Warranty"
-EMPTY_CELL = "-"
 
 # ------------------- template blocks -------------------
 #: The one source of truth for what each block may reference. The load-time lint
@@ -399,6 +446,7 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
     keep calling it the same way; the internals are now template-driven.
     """
     templates = load_templates()
+    settings = load_app_settings()
     return render_receipt(
         {
             "invoice_no": inv_no,
@@ -412,68 +460,101 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
         },
         templates,
         resource_base=file_url_for_directory(RESOURCE_DIR),
-        font_faces=build_font_faces(load_app_settings().get("fonts")),
+        font_faces=build_font_faces(settings.get("fonts")),
+        strings=config.load_strings(),
+        currency=settings.get("currency"),
+        terms=settings.get("terms_page", {}).get("enabled", True),
+        tax_config=settings.get("tax"),
     )
 
 
-def render_receipt(data, templates, resource_base="", font_faces=""):
-    """Pure render: (data, templates) -> html. No clock, no IO, no globals.
+def render_receipt(data, templates, resource_base="", font_faces="", strings=None,
+                   currency=None, terms=True, tax_config=None):
+    """Pure render: (data, templates, strings, currency) -> html.
 
-    Everything non-deterministic (the resource base URL, the invoice number, the
-    date string, the base64 font payload) is injected by the caller -- principle 2.
+    No clock, no IO, no globals. Everything non-deterministic (the resource base
+    URL, the invoice number, the date string, the base64 font payload) is
+    injected by the caller -- principle 2.
     """
+    strings = strings or config.default_strings()
+    currency = currency if currency is not None else config.DEFAULT_APP_SETTINGS["currency"]
+    decimals = currency.get("decimals", AMOUNT_DECIMALS)
+    group_lines = currency.get("group_line_amounts", True)
+    column_labels = strings.get("columns", {})
+    totals_labels = strings.get("totals", {})
+    empty_cell = strings.get("empty_cell", "-")
     items = data.get("items") or []
 
     # --- line items -----------------------------------------------------
-    used = {key for key, _label, _cls, optional in ITEM_COLUMNS if not optional}
-    for key, _label, _cls, optional in ITEM_COLUMNS:
-        if optional and any(quantize(item.get(key, 0)) for item in items):
+    used = {key for key, _cls, optional in ITEM_COLUMNS if not optional}
+    for key, _cls, optional in ITEM_COLUMNS:
+        if optional and any(quantize(item.get(key, 0), decimals) for item in items):
             used.add(key)
     columns = [col for col in ITEM_COLUMNS if col[0] in used]
 
     header_cells = "".join(
-        _block(templates, "item_header_cell.html", {"label": label, "css_class": css})
-        for _key, label, css, _optional in columns
+        _block(templates, "item_header_cell.html",
+               {"label": column_labels.get(key, key), "css_class": css})
+        for key, css, _optional in columns
     )
 
     rows = []
     for item in items:
         cells = "".join(
-            _block(templates, "item_row_cell.html", _cell_context(item, key, css))
-            for key, _label, css, _optional in columns
+            _block(templates, "item_row_cell.html",
+                   _cell_context(item, key, css, empty_cell, currency, group_lines))
+            for key, css, _optional in columns
         )
         rows.append(f"<tr>{cells}</tr>")
 
     # --- totals ---------------------------------------------------------
     # Sum the *rounded* line values so the printed figures add up on the page.
-    subtotal = sum((quantize(quantize(i.get("qty", 0)) * to_decimal(i.get("price", 0)))
+    subtotal = sum((quantize(to_decimal(i.get("qty", 0)) * to_decimal(i.get("price", 0)), decimals)
                     for i in items), Decimal("0"))
-    total_discount = sum((quantize(i.get("discount", 0)) for i in items), Decimal("0"))
-    total_tax = sum((quantize(i.get("tax", 0)) for i in items), Decimal("0"))
-    ship = quantize(data.get("shipping", 0))
-    total = subtotal + total_tax - total_discount + ship
+    total_discount = sum((quantize(i.get("discount", 0), decimals) for i in items), Decimal("0"))
+    total_tax = sum((quantize(i.get("tax", 0), decimals) for i in items), Decimal("0"))
+    ship = quantize(data.get("shipping", 0), decimals)
+
+    # Document-level tax rows, on top of the per-line tax amounts above.
+    doc_tax_rows, doc_tax_added = compute_tax_rows(
+        subtotal, total_discount, tax_config, decimals)
+
+    total = subtotal + total_tax - total_discount + ship + doc_tax_added
 
     # Break the subtotal out only when there is something besides the line items
     # to show; otherwise TOTAL alone says everything.
     totals_rows = ""
-    if total_tax or total_discount or ship:
-        breakdown = [("Subtotal", format_amount(subtotal, group=True))]
+    if total_tax or total_discount or ship or doc_tax_rows:
+        breakdown = [(totals_labels.get("subtotal", "Subtotal"),
+                      format_amount(subtotal, currency))]
         if total_tax:
-            breakdown.append(("Taxes", format_amount(total_tax, group=True)))
+            breakdown.append((totals_labels.get("taxes", "Taxes"),
+                              format_amount(total_tax, currency)))
         if total_discount:
-            breakdown.append(("Discounts", "- " + format_amount(total_discount, group=True)))
+            # A discount is shown as a deduction from a positive figure, so the
+            # sign is part of the row's wording -- not negative_style, which is
+            # for an amount that is itself negative (a refund line).
+            breakdown.append((totals_labels.get("discounts", "Discounts"),
+                              "- " + format_amount(total_discount, currency)))
         if ship:
-            breakdown.append(("Shipping Fees", format_amount(ship, group=True)))
+            breakdown.append((totals_labels.get("shipping", "Shipping Fees"),
+                              format_amount(ship, currency)))
+        # In inclusive mode these are reported, not added, so the label has to
+        # say so -- otherwise the figures look like they do not add up.
+        included_suffix = totals_labels.get("included_suffix", " (included)")
+        inclusive = (tax_config or {}).get("mode", "exclusive") == "inclusive"
+        for label, amount in doc_tax_rows:
+            breakdown.append((f"{label}{included_suffix}" if inclusive else label,
+                              format_amount(amount, currency)))
         totals_rows = "".join(
             _block(templates, "totals_row.html", {"label": label, "amount": amount})
             for label, amount in breakdown
         )
 
     # --- assemble -------------------------------------------------------
-    receipt_type = data.get("receipt_type", "Online")
+    receipt_type = data.get("receipt_type", "")
     receipt_info = _block(templates, "receipt_info.html", {
-        # Stage 3 moves this wording into receipt_types config / strings.json.
-        "type_badge": "ONLINE ORDER" if receipt_type == "Online" else "IN-STORE SALE",
+        "type_badge": config.receipt_type_by_label(receipt_type).get("badge_text", ""),
         "invoice_no": data.get("invoice_no", ""),
         "date": data.get("date", ""),
         "customer_name": data.get("customer_name", ""),
@@ -486,7 +567,7 @@ def render_receipt(data, templates, resource_base="", font_faces=""):
     })
     totals = _block(templates, "totals.html", {
         "totals_rows": totals_rows,
-        "total": format_amount(total, group=True),
+        "total": format_amount(total, currency),
     })
 
     return _block(templates, "base.html", {
@@ -496,8 +577,70 @@ def render_receipt(data, templates, resource_base="", font_faces=""):
         "receipt_info": receipt_info,
         "items_table": items_table,
         "totals": totals,
-        "terms": _block(templates, "terms.html"),
+        # Empty when the terms page is switched off; base.html wraps it in an
+        # {{#if}} so disabling it leaves no stray blank page or whitespace.
+        "terms": _block(templates, "terms.html") if terms else "",
     })
+
+
+def compute_tax_rows(subtotal, total_discount, tax_config, decimals):
+    """Work out the document-level tax lines.
+
+    Returns ``(rows, added_to_total)`` where ``rows`` is a list of
+    ``(label, amount)`` and ``added_to_total`` is what the grand total gains --
+    zero in inclusive mode, because there the tax is already inside the prices.
+
+    Ordering is fixed: any discount comes off first, then tax applies to the
+    result (unless a row asks for the pre-discount subtotal). With several
+    inclusive percent rows the combined rate is backed out **once** rather than
+    each row being backed out of the gross independently, which would over-state
+    every row after the first.
+    """
+    tax_config = tax_config or {}
+    rows = tax_config.get("rows") or []
+    if not rows:
+        return [], Decimal("0")
+
+    inclusive = tax_config.get("mode", "exclusive") == "inclusive"
+
+    def base_for(row):
+        if row.get("applies_to", "subtotal_after_discount") == "subtotal":
+            return subtotal
+        return subtotal - total_discount
+
+    if inclusive:
+        # Fixed inclusive amounts sit inside the price as-is; percent rows share
+        # whatever is left once those are removed.
+        fixed_total = sum(
+            (quantize(r.get("value", 0), decimals) for r in rows
+             if r.get("type", "percent") == "fixed"), Decimal("0"))
+        combined_rate = sum(
+            (to_decimal(r.get("value", 0)) for r in rows
+             if r.get("type", "percent") == "percent"), Decimal("0")) / Decimal(100)
+
+        results = []
+        for row in rows:
+            label = str(row.get("label", ""))
+            if row.get("type", "percent") == "fixed":
+                results.append((label, quantize(row.get("value", 0), decimals)))
+                continue
+            gross = base_for(row) - fixed_total
+            net = gross / (Decimal(1) + combined_rate) if combined_rate else gross
+            amount = net * to_decimal(row.get("value", 0)) / Decimal(100)
+            results.append((label, quantize(amount, decimals)))
+        return results, Decimal("0")
+
+    results, added = [], Decimal("0")
+    for row in rows:
+        label = str(row.get("label", ""))
+        if row.get("type", "percent") == "fixed":
+            amount = quantize(row.get("value", 0), decimals)
+        else:
+            amount = quantize(
+                base_for(row) * to_decimal(row.get("value", 0)) / Decimal(100), decimals)
+        results.append((label, amount))
+        added += amount
+    return results, added
 
 
 _FONT_MIME = {
@@ -552,8 +695,10 @@ def build_font_faces(fonts):
     return "\n" + "\n".join(faces)
 
 
-def _cell_context(item, key, css_class):
+def _cell_context(item, key, css_class, empty_cell="-", currency=None, group=True):
     """Precompute one cell's finished strings -- templates make no decisions."""
+    currency = currency or {}
+    decimals = currency.get("decimals", AMOUNT_DECIMALS)
     note = ""
     if key == "desc":
         warranty = str(item.get("warranty", "") or "")
@@ -563,14 +708,15 @@ def _cell_context(item, key, css_class):
     elif key == "qty":
         value = item.get("qty", "")
     elif key == "price":
-        value = format_amount(item.get("price", 0))
+        value = format_amount(item.get("price", 0), currency, group)
     elif key == "amount":
-        value = format_amount(quantize(item.get("qty", 0)) * to_decimal(item.get("price", 0)))
+        line_total = to_decimal(item.get("qty", 0)) * to_decimal(item.get("price", 0))
+        value = format_amount(line_total, currency, group)
     elif key in ("discount", "tax"):
-        raw = quantize(item.get(key, 0))
-        value = format_amount(raw) if raw else EMPTY_CELL
-    else:  # sku, serial -- plain text with a dash when blank
-        value = str(item.get(key, "") or "") or EMPTY_CELL
+        raw = quantize(item.get(key, 0), decimals)
+        value = format_amount(raw, currency, group) if raw else empty_cell
+    else:  # sku, serial -- plain text with the empty marker when blank
+        value = str(item.get(key, "") or "") or empty_cell
 
     return {"value": value, "css_class": css_class, "note": note}
 

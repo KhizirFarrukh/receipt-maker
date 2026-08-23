@@ -25,9 +25,6 @@ import receipt_signing
 from config import (
     APP_DIR,
     OUTPUT_DIR,
-    RECEIPT_TYPES,
-    DATE_DISPLAY_FORMAT,
-    DATE_PARSE_FORMATS,
     load_app_settings,
 )
 
@@ -137,7 +134,14 @@ def show_error(parent, title, summary, detail=None):
 class ReceiptApp:
     def __init__(self, root):
         self.root = root
-        company = load_app_settings()["company"]
+        settings = load_app_settings()
+        company = settings["company"]
+        # Label the amount fields with the configured currency rather than a
+        # hardcoded one, so the form matches what the receipt will print.
+        currency = settings.get("currency", {})
+        self.money_label = (str(currency.get("code", "")).strip()
+                            or str(currency.get("symbol", "")).strip())
+        self.type_labels = config.receipt_type_labels(settings)
         root.title(f"{company['name']} - Receipt Generator")
         root.resizable(True, True)
         self._apply_scaling(root)
@@ -149,11 +153,11 @@ class ReceiptApp:
 
         # row 0: receipt type, invoice no, date
         ttk.Label(main_frame, text="Receipt Type").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-        self.receipt_type = tk.StringVar(value="Online")
+        self.receipt_type = tk.StringVar(value=self.type_labels[0])
         type_combo = ttk.Combobox(
             main_frame,
             textvariable=self.receipt_type,
-            values=list(RECEIPT_TYPES.keys()),
+            values=self.type_labels,
             state="readonly",
             width=12,
         )
@@ -165,7 +169,7 @@ class ReceiptApp:
         ttk.Entry(main_frame, textvariable=self.inv_no, width=18).grid(row=0, column=3, padx=5, pady=2, sticky=tk.W)
 
         ttk.Label(main_frame, text="Date").grid(row=0, column=4, sticky=tk.W, padx=5, pady=2)
-        self.date = tk.StringVar(value=date.today().strftime(DATE_DISPLAY_FORMAT))
+        self.date = tk.StringVar(value=date.today().strftime(config.date_display_format()))
         self.date_entry = ttk.Entry(main_frame, textvariable=self.date, width=15)
         self.date_entry.grid(row=0, column=5, padx=5, pady=2, sticky=tk.W)
         self.date_entry.bind("<Button-1>", self.show_date_picker)
@@ -185,7 +189,7 @@ class ReceiptApp:
         self.cust_email = tk.StringVar()
         ttk.Entry(main_frame, textvariable=self.cust_email, width=30).grid(row=2, column=1, columnspan=2, padx=5, pady=2)
 
-        ttk.Label(main_frame, text="Shipping (PKR)").grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(main_frame, text=self._money_field("Shipping")).grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
         self.shipping = tk.StringVar()
         ttk.Entry(main_frame, textvariable=self.shipping, width=15).grid(row=2, column=4, padx=5, pady=2, sticky=tk.W)
 
@@ -216,9 +220,9 @@ class ReceiptApp:
         self.items_tree.heading("desc", text="Description")
         self.items_tree.heading("serial", text="Serial Number")
         self.items_tree.heading("qty", text="Qty")
-        self.items_tree.heading("price", text="Unit Price (PKR)")
-        self.items_tree.heading("discount", text="Discount (PKR)")
-        self.items_tree.heading("tax", text="Tax (PKR)")
+        self.items_tree.heading("price", text=self._money_field("Unit Price"))
+        self.items_tree.heading("discount", text=self._money_field("Discount"))
+        self.items_tree.heading("tax", text=self._money_field("Tax"))
         self.items_tree.heading("warranty", text="Warranty")
 
         self.items_tree.column("sku", width=70)
@@ -255,6 +259,10 @@ class ReceiptApp:
         # size the window to fit its contents, clamped to the screen so the
         # action buttons are always visible (even at 1024x768)
         self._size_window(root, main_frame)
+
+    def _money_field(self, label):
+        """Label an amount field with the configured currency, e.g. 'Shipping (USD)'."""
+        return f"{label} ({self.money_label})" if self.money_label else label
 
     # ------------------- scaling / window sizing -------------------
     @staticmethod
@@ -315,7 +323,7 @@ class ReceiptApp:
         if not raw_date:
             return None
 
-        for fmt in DATE_PARSE_FORMATS:
+        for fmt in config.date_parse_formats():
             try:
                 return datetime.strptime(raw_date, fmt).date()
             except ValueError:
@@ -436,7 +444,7 @@ class ReceiptApp:
         self.render_date_picker_month(frame, year, month, selected_date)
 
     def select_date(self, selected_date):
-        self.date.set(selected_date.strftime(DATE_DISPLAY_FORMAT))
+        self.date.set(selected_date.strftime(config.date_display_format()))
         self.close_date_picker()
 
     def close_date_picker(self):
@@ -467,7 +475,9 @@ class ReceiptApp:
         dialog.resizable(False, False)
         dialog.transient(self.root)  # stay tied to and above the main window
 
-        labels = ["SKU", "Description", "Serial No.", "Quantity", "Unit Price (PKR)", "Discount (PKR)", "Tax (PKR)"]
+        labels = ["SKU", "Description", "Serial No.", "Quantity",
+                  self._money_field("Unit Price"), self._money_field("Discount"),
+                  self._money_field("Tax")]
         vars_ = [tk.StringVar() for _ in labels]
 
         for i, (label, var) in enumerate(zip(labels, vars_)):
@@ -603,7 +613,7 @@ class ReceiptApp:
 
     def clear_form(self):
         self.close_date_picker()
-        self.receipt_type.set("Online")
+        self.receipt_type.set(self.type_labels[0])
         self.refresh_invoice_number()
         self.cust_name.set("")
         self.cust_phone.set("")
@@ -901,7 +911,7 @@ def run_smoke_test():
         pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")
         html_content = receipt_render.build_html(
             "INV-W0000",
-            date.today().strftime(DATE_DISPLAY_FORMAT),
+            date.today().strftime(config.date_display_format()),
             "Smoke Test Customer",
             "000-000-0000",
             "smoke@example.com",

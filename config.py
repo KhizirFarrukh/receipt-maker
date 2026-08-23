@@ -110,8 +110,31 @@ DEFAULT_FILENAME_FIELDS = ["date", "name"]
 # ------------------- schema -------------------
 #: Bumped whenever appsettings.json is *restructured*. Adding a key with a
 #: default does not need a bump -- deep-merge already fills it in.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA_VERSION_KEY = "schema_version"
+
+TAX_MODES = ("exclusive", "inclusive")
+TAX_ROW_TYPES = ("percent", "fixed")
+TAX_BASES = ("subtotal_after_discount", "subtotal")
+GROUP_STYLES = ("thousand", "indian", "none")
+SYMBOL_POSITIONS = ("prefix", "suffix")
+NEGATIVE_STYLES = ("minus", "parentheses")
+
+#: How amounts rendered before currency became configurable: the symbol "Rs. ",
+#: two decimals, grouped in the totals but NOT inside the item table. An existing
+#: install migrating to schema 3 is seeded with exactly this, so nobody's
+#: receipts change currency or spacing behind their back. Fresh installs get the
+#: neutral defaults in DEFAULT_APP_SETTINGS instead.
+LEGACY_CURRENCY = {
+    "symbol": "Rs.",
+    "symbol_space": True,
+    "code": "",
+    "decimals": 2,
+    "position": "prefix",
+    "group_style": "thousand",
+    "negative_style": "minus",
+    "group_line_amounts": False,
+}
 
 DEFAULT_APP_SETTINGS = {
     SCHEMA_VERSION_KEY: SCHEMA_VERSION,
@@ -137,6 +160,23 @@ DEFAULT_APP_SETTINGS = {
         "location": "",
         "tsa_url": "",
     },
+    # How every amount on a receipt is rendered.
+    #   symbol/symbol_space/position -- "$12.00", "12.00 kr", "Rs. 12.00"
+    #   group_style   -- thousand: 1,234,567   indian: 12,34,567   none: 1234567
+    #   negative_style -- minus: -$5.00        parentheses: ($5.00)
+    #   group_line_amounts -- apply grouping inside the item table too. True here
+    #     because a receipt that groups its totals but not its line amounts looks
+    #     inconsistent; existing installs migrate to False to keep today's output.
+    "currency": {
+        "symbol": "$",
+        "symbol_space": False,
+        "code": "USD",
+        "decimals": 2,
+        "position": "prefix",
+        "group_style": "thousand",
+        "negative_style": "minus",
+        "group_line_amounts": True,
+    },
     # PDF page geometry. The top/bottom margins must reserve room for the page
     # header and footer templates, or Chromium clips them -- see Templates/header.html.
     "document": {
@@ -144,6 +184,37 @@ DEFAULT_APP_SETTINGS = {
         "margin_bottom": PDF_MARGIN_BOTTOM,
         "margin_left": PDF_MARGIN_LEFT,
         "margin_right": PDF_MARGIN_RIGHT,
+    },
+    # Document-level tax, applied on top of (or backed out of) the line totals.
+    #   mode "exclusive" -- tax is added to the subtotal (US/UK-style quoting)
+    #   mode "inclusive" -- shown prices already contain the tax, so it is backed
+    #                       out and reported, not added. A market that quotes
+    #                       inclusive prices cannot be represented by "add on
+    #                       top" alone, which is why this is a mode and not a flag.
+    # Each row: {label, type: percent|fixed, value, applies_to}. `applies_to` is
+    # document-level in v1: "subtotal" or "subtotal_after_discount". Per-line tax
+    # RATES are out of scope; the per-line `tax` column remains an amount.
+    # Ordering is fixed and deliberate: discount first, then tax on the result.
+    "tax": {
+        "mode": "exclusive",
+        "rows": [],
+    },
+    # strftime pattern for the date shown on the receipt and used in filenames.
+    "date_format": DATE_DISPLAY_FORMAT,
+    # Each receipt type keeps its own invoice series, identified by `code`.
+    # Changing a code starts a new series -- existing INV-W#### files stop
+    # matching -- so migration preserves W and S verbatim.
+    # `legacy_unlettered` marks the series that also counts pre-Stage-0
+    # unlettered INV-#### files; exactly one type may claim them.
+    "receipt_types": [
+        {"label": "Online", "code": "W", "badge_text": "ONLINE ORDER",
+         "legacy_unlettered": True},
+        {"label": "In Store", "code": "S", "badge_text": "IN-STORE SALE"},
+    ],
+    # The Warranty & Returns page appended after the receipt. Edit its wording in
+    # Templates/terms.html; set enabled to false to drop the page entirely.
+    "terms_page": {
+        "enabled": True,
     },
     "render": {
         # Receipts must generate offline and identically on every machine, and a
@@ -163,6 +234,41 @@ DEFAULT_APP_SETTINGS = {
         "fallback": "Helvetica, Arial, sans-serif",
     },
 }
+
+STRINGS_FILE_NAME = "strings.json"
+
+#: Words the *renderer* produces, as opposed to words a template author types
+#: directly into an .html file. Principle 3 says no user-visible string lives in
+#: Python; anything the renderer composes therefore lives here.
+#:
+#: This is a separate file from appsettings.json on purpose: wording edits then
+#: stay clear of config migrations and their .bak churn, and a translation is a
+#: drop-in file rather than a merge into someone's settings.
+DEFAULT_STRINGS = {
+    SCHEMA_VERSION_KEY: 1,
+    "columns": {
+        "sku": "SKU",
+        "desc": "Item Description",
+        "serial": "Serial Number",
+        "qty": "Qty",
+        "price": "Unit Price",
+        "discount": "Discount",
+        "tax": "Tax",
+        "amount": "Amount",
+    },
+    "totals": {
+        "subtotal": "Subtotal",
+        "taxes": "Taxes",
+        "discounts": "Discounts",
+        "shipping": "Shipping Fees",
+        # Appended to a tax row when tax.mode is "inclusive", so a reader can
+        # see why the tax figure is not added into the total.
+        "included_suffix": " (included)",
+    },
+    # Printed in a cell that has no value (an item with no SKU or serial).
+    "empty_cell": "-",
+}
+
 
 class ConfigError(Exception):
     """A config file is unusable. Carries the file and key so the UI can say where."""
@@ -245,6 +351,17 @@ def migrate(raw, filename=None):
         migrated[SCHEMA_VERSION_KEY] = 2
         changed = True
 
+    if version < 3:
+        # v2 -> v3: amounts become configurable. A plain deep-merge would hand an
+        # existing install the *neutral* default ($, grouped line amounts) and
+        # silently restyle -- and re-denominate -- every receipt it goes on to
+        # issue. Seed the values that reproduce what this install printed before
+        # instead; only a brand-new config gets the neutral defaults.
+        if "currency" not in migrated:
+            migrated["currency"] = dict(LEGACY_CURRENCY)
+        migrated[SCHEMA_VERSION_KEY] = 3
+        changed = True
+
     settings = deep_merge(DEFAULT_APP_SETTINGS, migrated)
     if settings != migrated:
         changed = True
@@ -293,6 +410,130 @@ def validate(settings, filename=None):
     if tsa and not tsa.lower().startswith(("http://", "https://")):
         raise ConfigError(
             "must be an http:// or https:// URL when set", filename, "signing.tsa_url")
+
+    currency = settings.get("currency")
+    if not isinstance(currency, dict):
+        raise ConfigError("must be an object", filename, "currency")
+    for key in ("symbol", "code"):
+        if not isinstance(currency.get(key, ""), str):
+            raise ConfigError("must be text", filename, f"currency.{key}")
+    for key in ("symbol_space", "group_line_amounts"):
+        if not isinstance(currency.get(key, False), bool):
+            raise ConfigError("must be true or false", filename, f"currency.{key}")
+    decimals = currency.get("decimals", 2)
+    if isinstance(decimals, bool) or not isinstance(decimals, int) or not 0 <= decimals <= 6:
+        raise ConfigError(
+            "must be a whole number of decimal places between 0 and 6",
+            filename, "currency.decimals")
+    for key, allowed in (("position", SYMBOL_POSITIONS),
+                         ("group_style", GROUP_STYLES),
+                         ("negative_style", NEGATIVE_STYLES)):
+        value = currency.get(key, allowed[0])
+        if value not in allowed:
+            raise ConfigError(
+                f"must be one of {', '.join(allowed)} (got {value!r})",
+                filename, f"currency.{key}")
+
+    tax = settings.get("tax")
+    if not isinstance(tax, dict):
+        raise ConfigError("must be an object", filename, "tax")
+    if tax.get("mode", "exclusive") not in TAX_MODES:
+        raise ConfigError(
+            f"must be one of {', '.join(TAX_MODES)} (got {tax.get('mode')!r})",
+            filename, "tax.mode")
+    tax_rows = tax.get("rows", [])
+    if not isinstance(tax_rows, list):
+        raise ConfigError("must be a list of tax rows", filename, "tax.rows")
+    for index, row in enumerate(tax_rows):
+        where = f"tax.rows[{index}]"
+        if not isinstance(row, dict):
+            raise ConfigError("must be an object", filename, where)
+        if not str(row.get("label", "")).strip():
+            raise ConfigError(
+                "must have a label -- it names the line on the receipt",
+                filename, f"{where}.label")
+        row_type = row.get("type", "percent")
+        if row_type not in TAX_ROW_TYPES:
+            raise ConfigError(
+                f"must be one of {', '.join(TAX_ROW_TYPES)} (got {row_type!r})",
+                filename, f"{where}.type")
+        value = row.get("value", 0)
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ConfigError("must be a number", filename, f"{where}.value")
+        try:
+            numeric = float(str(value))
+        except ValueError:
+            raise ConfigError(
+                f"must be a number (got {value!r})", filename, f"{where}.value") from None
+        if numeric < 0:
+            raise ConfigError("must not be negative", filename, f"{where}.value")
+        if row_type == "percent" and numeric > 100:
+            raise ConfigError(
+                f"is a percentage, so it cannot exceed 100 (got {numeric})",
+                filename, f"{where}.value")
+        applies_to = row.get("applies_to", TAX_BASES[0])
+        if applies_to not in TAX_BASES:
+            raise ConfigError(
+                f"must be one of {', '.join(TAX_BASES)} (got {applies_to!r})",
+                filename, f"{where}.applies_to")
+
+    date_format = settings.get("date_format", DATE_DISPLAY_FORMAT)
+    if not isinstance(date_format, str) or not date_format.strip():
+        raise ConfigError("must be a non-empty strftime pattern", filename, "date_format")
+    try:
+        # A pattern that cannot format a real date would fail at generation time,
+        # on a receipt, rather than here.
+        if not datetime.date(2026, 1, 31).strftime(date_format).strip():
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ConfigError(
+            f"is not a usable strftime pattern ({date_format!r}); "
+            f"for example \"%d %b %Y\" gives \"31 Jan 2026\"",
+            filename, "date_format") from None
+
+    types = settings.get("receipt_types")
+    if not isinstance(types, list) or not types:
+        raise ConfigError(
+            "must be a non-empty list -- every receipt needs a type",
+            filename, "receipt_types")
+    seen_codes, seen_labels, legacy_claims = set(), set(), 0
+    for index, entry in enumerate(types):
+        where = f"receipt_types[{index}]"
+        if not isinstance(entry, dict):
+            raise ConfigError("must be an object", filename, where)
+        label = str(entry.get("label", "")).strip()
+        code = str(entry.get("code", "")).strip()
+        if not label:
+            raise ConfigError("must have a label", filename, where)
+        if not code:
+            raise ConfigError("must have a code", filename, f"{where}.code")
+        if not code.isalnum():
+            raise ConfigError(
+                f"must be letters or digits only -- it becomes part of the "
+                f"invoice number and the PDF filename (got {code!r})",
+                filename, f"{where}.code")
+        if code.upper() in seen_codes:
+            raise ConfigError(
+                f"duplicate code {code!r} -- two types sharing a code would share "
+                f"one invoice series and produce duplicate numbers",
+                filename, f"{where}.code")
+        if label in seen_labels:
+            raise ConfigError(f"duplicate label {label!r}", filename, f"{where}.label")
+        seen_codes.add(code.upper())
+        seen_labels.add(label)
+        if entry.get("legacy_unlettered"):
+            legacy_claims += 1
+    if legacy_claims > 1:
+        raise ConfigError(
+            "only one receipt type may set legacy_unlettered -- otherwise two "
+            "series would both count the old unlettered INV-#### files",
+            filename, "receipt_types")
+
+    terms_page = settings.get("terms_page")
+    if not isinstance(terms_page, dict):
+        raise ConfigError("must be an object", filename, "terms_page")
+    if not isinstance(terms_page.get("enabled", True), bool):
+        raise ConfigError("must be true or false", filename, "terms_page.enabled")
 
     document = settings.get("document")
     if not isinstance(document, dict):
@@ -479,6 +720,74 @@ def load_filename_fields(path=None):
         if field in FILENAME_FIELD_OPTIONS and field not in selected_fields:
             selected_fields.append(field)
     return selected_fields
+
+
+def receipt_types(settings=None):
+    """The configured receipt types as an ordered list of dicts."""
+    settings = settings if settings is not None else load_app_settings()
+    types = settings.get("receipt_types") or DEFAULT_APP_SETTINGS["receipt_types"]
+    return [dict(t) for t in types]
+
+
+def receipt_type_labels(settings=None):
+    """Type labels in config order -- what the GUI dropdown offers."""
+    return [t["label"] for t in receipt_types(settings)]
+
+
+def receipt_type_by_label(label, settings=None):
+    """Look a type up by its label, falling back to the first configured type."""
+    types = receipt_types(settings)
+    for entry in types:
+        if entry.get("label") == label:
+            return entry
+    return types[0]
+
+
+def date_display_format(settings=None):
+    settings = settings if settings is not None else load_app_settings()
+    return settings.get("date_format") or DATE_DISPLAY_FORMAT
+
+
+def date_parse_formats(settings=None):
+    """Formats the date entry accepts, with the configured one tried first."""
+    configured = date_display_format(settings)
+    formats = [configured]
+    formats.extend(f for f in DATE_PARSE_FORMATS if f != configured)
+    return tuple(formats)
+
+
+def strings_file():
+    return os.path.join(APP_DIR, STRINGS_FILE_NAME)
+
+
+def default_strings():
+    return json.loads(json.dumps(DEFAULT_STRINGS))   # deep copy
+
+
+def load_strings(path=None):
+    """Load strings.json, deep-merged over the defaults.
+
+    Missing or unreadable falls back to defaults rather than taking the app
+    down: a typo in a wording file must never stop a receipt being issued.
+    Missing individual keys are filled from defaults, so a partial file (a
+    translation covering only some strings) works.
+    """
+    path = path or strings_file()
+    if not os.path.exists(path):
+        try:
+            atomic_write_json(path, DEFAULT_STRINGS, keep_backup=False)
+        except OSError:
+            pass
+        return default_strings()
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default_strings()
+    if not isinstance(raw, dict):
+        return default_strings()
+    return deep_merge(DEFAULT_STRINGS, raw)
 
 
 def file_digest(path):

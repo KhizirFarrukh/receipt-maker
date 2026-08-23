@@ -26,6 +26,16 @@ import cli  # noqa: E402
 FIX = os.path.join(PROJ, "tests", "fixtures")
 GOLDEN_INPUT = os.path.join(FIX, "golden_input.json")
 GOLDEN_HTML = os.path.join(FIX, "golden.html")
+import gate_env  # noqa: E402
+
+
+def setUpModule():
+    """Render every golden comparison against the pinned fixture config."""
+    gate_env.use_gate_env()
+
+
+def tearDownModule():
+    gate_env.restore()
 
 
 @contextlib.contextmanager

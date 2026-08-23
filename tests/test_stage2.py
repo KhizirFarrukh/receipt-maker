@@ -32,6 +32,21 @@ import receipt_render      # noqa: E402
 import receipt_service     # noqa: E402
 import template_engine     # noqa: E402
 
+import gate_env  # noqa: E402
+
+
+def setUpModule():
+    """Render against the pinned fixture config, not the developer's own.
+
+    Several tests here call build_html, which reads the live config. Without
+    this they would start failing the moment someone set their own currency.
+    """
+    gate_env.use_gate_env()
+
+
+def tearDownModule():
+    gate_env.restore()
+
 
 class TempAppDir(unittest.TestCase):
     """Runs each test against a throwaway APP_DIR, restoring the real one after."""
@@ -261,17 +276,22 @@ class MoneyContract(unittest.TestCase):
         self.assertEqual(receipt_render.quantize("0.125"), Decimal("0.13"))
         self.assertEqual(receipt_render.quantize("0.135"), Decimal("0.14"))
 
+    #: The currency the gate fixture pins -- i.e. how amounts printed before
+    #: Stage 3 made them configurable.
+    LEGACY = {"symbol": "Rs.", "symbol_space": True, "decimals": 2,
+              "position": "prefix", "group_style": "thousand",
+              "negative_style": "minus"}
+
     def test_format_amount_grouping(self):
-        self.assertEqual(receipt_render.format_amount("22450"), "Rs. 22450.00")
-        self.assertEqual(receipt_render.format_amount("22450", group=True), "Rs. 22,450.00")
+        self.assertEqual(receipt_render.format_amount("22450", self.LEGACY, group=False),
+                         "Rs. 22450.00")
+        self.assertEqual(receipt_render.format_amount("22450", self.LEGACY),
+                         "Rs. 22,450.00")
 
     def test_format_amount_at_zero_decimals(self):
-        original = receipt_render.AMOUNT_DECIMALS
-        try:
-            receipt_render.AMOUNT_DECIMALS = 0
-            self.assertEqual(receipt_render.format_amount("1234.6", group=True), "Rs. 1,235")
-        finally:
-            receipt_render.AMOUNT_DECIMALS = original
+        self.assertEqual(
+            receipt_render.format_amount("1234.6", dict(self.LEGACY, decimals=0)),
+            "Rs. 1,235")
 
     def test_bad_input_degrades_to_zero_rather_than_crashing(self):
         self.assertEqual(receipt_render.quantize("not a number"), Decimal("0.00"))

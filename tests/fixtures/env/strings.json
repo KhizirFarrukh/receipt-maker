@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "columns": {
+    "sku": "SKU",
+    "desc": "Item Description",
+    "serial": "Serial Number",
+    "qty": "Qty",
+    "price": "Unit Price",
+    "discount": "Discount",
+    "tax": "Tax",
+    "amount": "Amount"
+  },
+  "totals": {
+    "subtotal": "Subtotal",
+    "taxes": "Taxes",
+    "discounts": "Discounts",
+    "shipping": "Shipping Fees"
+  },
+  "empty_cell": "-"
+}

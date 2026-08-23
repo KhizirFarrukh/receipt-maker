@@ -143,6 +143,59 @@ state & data files", §"Amounts, arithmetic & tax", §"Testing & gates".
 
 ---
 
+## Phase E — Stage 3 (configurable primitives: cosmetic + tax)
+
+Spec: PLAN-generalization.md §"Stage 3". **No numbering change in this stage** (that is Stage 4,
+deliberately isolated).
+
+**Key decision on the golden.** The plan says gates should run against neutral defaults, which
+would mean regenerating `golden.html` the moment currency becomes configurable. Doing that throws
+away the regression net exactly when the riskiest cosmetic changes land. Instead:
+`tests/fixtures/env/` pins a config equivalent to **today's** behaviour (Rs., 2dp, grouped
+totals), so **golden.html stays byte-identical through all of Stage 3** and proves the refactor
+changed nothing. Neutral defaults, `$`, 0-decimal, ungrouped, inclusive tax etc. get their own
+unit tests instead. The golden's job is catching regressions, not advertising defaults.
+
+- [x] E1. Hermetic gate — `tests/fixtures/env/` with a pinned `appsettings.json`; the golden gate
+      and every render-based test run against it via `--config-dir`, so output no longer depends
+      on the developer's own APP_DIR.
+- [x] E2. `strings.json` — column headings, totals labels and the empty-cell marker moved out of
+      Python; deep-merged over defaults so a partial file (a translation) works.
+- [x] E3. `currency` — `{symbol, symbol_space, code, decimals, position, group_style,
+      negative_style, group_line_amounts}`, applied everywhere amounts render. Grouping supports
+      `thousand`, `indian` (lakh/crore) and `none`. **Migration v2→v3 seeds existing configs with
+      the pre-Stage-3 values** (`Rs.`, 2dp, ungrouped line amounts) so no one's receipts change
+      currency or spacing; only fresh installs get the neutral `$`. Verified against the user's
+      real config.
+- [x] E4. `date_format` + `config.date_display_format()` / `date_parse_formats()`; the GUI reads
+      both instead of module constants. *`format_date` on a date object is still unnecessary —
+      the renderer receives a preformatted string by design (principle 2).*
+- [x] E5. `receipt_types` config (`label`/`code`/`badge_text`/`legacy_unlettered`) driving the
+      dropdown, the invoice prefix and the badge. Codes `W`/`S` preserved. `validate()` rejects
+      duplicate codes or labels, filename-unsafe codes, and two types both claiming the legacy
+      unlettered series.
+- [x] E6. `tax` — `mode: exclusive|inclusive` with document-level `rows`
+      (`percent`/`fixed`, `applies_to`). Inclusive rows are backed out and labelled *(included)*
+      rather than added; several inclusive percent rows share a single back-out so they cannot
+      compound against each other. Discount-before-tax ordering documented and tested.
+- [x] E7. `terms_page.enabled` — the page is dropped cleanly, with no stray whitespace, via an
+      `{{#if}}` in `base.html`.
+- [x] E8. Tests: **181 total** (was 124). Currency permutations, rounding self-consistency at 0
+      and 2 decimals, inclusive vs exclusive tax, receipt-type and tax validation, migration
+      behaviour. Golden **still byte-identical**, and the real PDF is byte-for-byte the same size
+      as before Stage 3.
+
+**Two traps found and fixed during E8, both of which would have silently rotted the gate:**
+
+1. `tests/fixtures/env/Templates/` is seeded on first use and — correctly, for a real install —
+   never overwritten afterwards. For the *gate* that meant edits to the repository's own
+   `Templates/` stopped reaching the tests: one golden check passed against a stale layout before
+   this was caught. `tests/gate_env.py` now clears the seeded copy on entry, so the repository
+   stays the single source of truth.
+2. `.gitignore`'s generic virtualenv rule `ENV/` matched `tests/fixtures/env/`, so the entire
+   pinned gate fixture would never have been committed and a fresh clone's gate would fail.
+   Negation rules added, ordered after the rule they undo.
+
 ## State left behind
 
 - Working tree is **uncommitted** on branch `generalization` (auto-commit is not running in this

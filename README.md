@@ -7,6 +7,7 @@ A Python tkinter desktop app for generating A4 PDF sales receipts.
 - Separate invoice number series for online (`INV-W####`) and in-store (`INV-S####`) purchases. The number is editable and defaults to one above the highest previously generated invoice in that series.
 - Customer, item, serial number, quantity, price, per-line discount, per-line tax, and warranty fields, plus a global shipping fee.
 - Receipt totals show a Subtotal / Taxes / Discounts / Shipping / Total breakdown; taxes, discounts, and shipping rows (and the Discount/Tax columns) appear only when used.
+- Configurable currency (symbol, placement, decimals, thousand/lakh grouping), date format, receipt types, and document-level tax — inclusive or exclusive. See [Business Settings](#business-settings).
 - Auto-incrementing receipt numbers saved under `invoices/`.
 - Configurable PDF filenames through `filename_config.json`.
 - Configurable business/header details through `appsettings.json`.
@@ -211,11 +212,97 @@ Edit `appsettings.json` to change the business details shown in the receipt head
 - `schema_version` — managed by the app. An older file is upgraded automatically on first run,
   keeping a timestamped `.bak` beside it. A file written by a *newer* version is refused with a
   clear message rather than being silently downgraded.
+- `currency` — see [Currency](#currency).
+- `tax` — see [Tax](#tax).
+- `date_format` — strftime pattern for the date on the receipt and in filenames, e.g.
+  `"%d %b %Y"` → `31 Jan 2026`, `"%Y-%m-%d"` → `2026-01-31`.
+- `receipt_types` — see [Receipt types](#receipt-types).
+- `terms_page` — `{"enabled": true}`. Set `false` to drop the Warranty & Returns page; edit its
+  wording in `Templates/terms.html`.
 - `document` — PDF page margins. `margin_top` / `margin_bottom` must reserve room for the page
   header and footer, or Chromium clips them.
 - `render` — `block_external_requests` (default `true`; receipts render offline and cannot fetch
   from a CDN), `timeout_ms`, `fail_on_missing_image`.
 - `fonts` — see [Fonts](#fonts).
+
+### Currency
+
+```json
+"currency": {
+  "symbol": "$",
+  "symbol_space": false,
+  "code": "USD",
+  "decimals": 2,
+  "position": "prefix",
+  "group_style": "thousand",
+  "negative_style": "minus",
+  "group_line_amounts": true
+}
+```
+
+- `symbol_space` — put a space between symbol and number (`Rs. 12.00` vs `$12.00`).
+- `position` — `prefix` or `suffix` (`12.00 kr`).
+- `decimals` — 0 to 6. Use `0` for currencies without minor units.
+- `group_style` — `thousand` (`1,234,567`), `indian` (`12,34,567`, the lakh/crore convention),
+  or `none` (`1234567`).
+- `negative_style` — `minus` (`-$5.00`) or `parentheses` (`($5.00)`).
+- `group_line_amounts` — whether digit grouping also applies inside the item table. Versions
+  before this one grouped the totals but not the line amounts, so **upgrading installs keep
+  `false`** to leave existing receipts looking the same. Set it to `true` for consistent
+  formatting throughout.
+- `code` — shown on the amount fields in the app window; it does not appear on the receipt.
+
+Amounts are computed in decimal, never binary floating point. Each line is rounded to `decimals`
+and the **rounded** values are summed, so the figures on the page always add up.
+
+### Tax
+
+Document-level tax, applied on top of the per-line `Tax` column:
+
+```json
+"tax": {
+  "mode": "exclusive",
+  "rows": [
+    { "label": "VAT 15%", "type": "percent", "value": 15, "applies_to": "subtotal_after_discount" }
+  ]
+}
+```
+
+- `mode: "exclusive"` — tax is **added** to the subtotal.
+- `mode: "inclusive"` — the prices you enter already contain the tax, so it is **backed out and
+  reported** rather than added. Those rows are labelled *(included)* so the total still reads
+  correctly. With several inclusive percentage rows the combined rate is backed out once, so the
+  rows do not compound against each other.
+- `type` — `percent` or `fixed`.
+- `applies_to` — `subtotal_after_discount` (default) or `subtotal`. Ordering is fixed: discounts
+  come off first, then tax applies to the result.
+
+Leave `rows` empty for no document-level tax.
+
+### Receipt types
+
+Each type keeps its own invoice-number series, identified by `code`:
+
+```json
+"receipt_types": [
+  { "label": "Online",   "code": "W", "badge_text": "ONLINE ORDER", "legacy_unlettered": true },
+  { "label": "In Store", "code": "S", "badge_text": "IN-STORE SALE" }
+]
+```
+
+`label` is what the app's dropdown shows, `badge_text` is printed on the receipt, and `code`
+becomes part of the invoice number (`INV-W1001`). Add an entry to add a type.
+
+**Changing an existing `code` starts a new number series** — previously issued `INV-W####` files
+stop being counted, so the next number would restart. `legacy_unlettered` marks the one series
+that also counts pre-versioning `INV-####` files; only one type may claim them.
+
+### Wording
+
+Words the app itself composes — column headings, the totals row labels, the marker printed in an
+empty cell — live in `strings.json` beside `appsettings.json`, created on first run. A partial
+file is fine; anything absent falls back to the default, so a translation only needs the keys it
+changes. Wording that belongs to the layout is in the templates instead.
 
 Settings are validated at startup. A bad value is reported with the exact file and key instead of
 failing halfway through a receipt; `python cli.py --check` runs the same validation on demand.
