@@ -738,6 +738,11 @@ class ReceiptApp:
                 "Cancel  -  Don't save",
             )
             if answer is None:
+                # The number was already claimed, and it stays claimed -- but an
+                # unexplained gap in an invoice sequence is exactly what this
+                # logging exists to prevent, so record why this one is missing.
+                if reserved:
+                    invoice_counter.note_unused(reserved, inv_no, "save cancelled by the user")
                 self.status_label.config(text="Save cancelled")
                 return
             if not answer:  # No -> keep the existing file, save a numbered copy
@@ -983,11 +988,43 @@ def run_smoke_test():
     return 0
 
 # ------------------- run -------------------
+def launch():
+    """Start the GUI, or explain in plain language why it cannot start.
+
+    Startup reads and validates the settings, and a bad value there used to
+    escape as a traceback -- which in the packaged build means a raw traceback
+    dialog, or nothing at all, since a windowed exe has no console. A settings
+    problem is the most likely reason the app will not open and the one a user
+    can actually fix, so it gets a readable message naming the file and key.
+    """
+    ReceiptApp.enable_dpi_awareness()
+    root = tk.Tk()
+    try:
+        ReceiptApp(root)
+    except config.ConfigError as exc:
+        return _report_startup_failure(
+            root, "Cannot start: settings problem", str(exc), 2)
+    except Exception as exc:  # noqa: BLE001 - last resort, reported not swallowed
+        return _report_startup_failure(root, "Cannot start", str(exc), 1)
+    root.mainloop()
+    return 0
+
+
+def _report_startup_failure(root, title, summary, code):
+    """Show why startup failed, then tear the half-built root down cleanly."""
+    detail = traceback.format_exc()
+    try:
+        root.withdraw()
+        show_error(root, title, summary, detail)
+    finally:
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
+    return code
+
+
 if __name__ == "__main__":
     if "--smoke-test" in sys.argv:
         raise SystemExit(run_smoke_test())
-    else:
-        ReceiptApp.enable_dpi_awareness()
-        root = tk.Tk()
-        app = ReceiptApp(root)
-        root.mainloop()
+    raise SystemExit(launch())

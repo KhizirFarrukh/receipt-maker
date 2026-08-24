@@ -84,6 +84,15 @@ class _FileLock:
         self._fd = None
 
     def __enter__(self):
+        # The lock lives beside the counter file, so its directory has to exist
+        # before the lock can be taken -- otherwise the very first run against a
+        # fresh output folder fails with "could not lock" instead of just working.
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        except OSError as exc:
+            raise CounterError(
+                f"Could not create the folder for the invoice counter:\n{exc}") from exc
+
         deadline = time.monotonic() + self.timeout
         while True:
             try:

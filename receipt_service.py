@@ -116,11 +116,30 @@ def reserve_invoice_number(prefix):
 
 
 # ------------------- output filenames -------------------
+#: Names Windows reserves for devices. A file whose stem is one of these cannot
+#: be created at all, whatever the extension -- "CON.pdf" fails. The invoice
+#: number is user-editable and leads the filename, so this is reachable.
+_WINDOWS_DEVICE_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{n}" for n in range(1, 10)]
+    + [f"LPT{n}" for n in range(1, 10)]
+)
+
+
 def sanitize_filename_part(value):
     clean_value = str(value).strip()
     clean_value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", clean_value)
     clean_value = re.sub(r"\s+", " ", clean_value).strip(" .")
     return clean_value
+
+
+def avoid_reserved_name(stem):
+    """Nudge a filename stem off a Windows device name.
+
+    Only the whole stem matters -- "INV-W1001-CON" is fine, bare "CON" is not.
+    A trailing underscore keeps the name recognisable while making it writable.
+    """
+    return f"{stem}_" if stem.upper() in _WINDOWS_DEVICE_NAMES else stem
 
 
 def build_pdf_filename(inv_no, date_str, cust, email, phone):
@@ -138,7 +157,7 @@ def build_pdf_filename(inv_no, date_str, cust, email, phone):
         if clean_value:
             filename_parts.append(clean_value)
 
-    return "-".join(filename_parts) + ".pdf"
+    return avoid_reserved_name("-".join(filename_parts)) + ".pdf"
 
 
 def next_available_pdf_path(base_filename):
