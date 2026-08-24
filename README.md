@@ -334,6 +334,63 @@ alone decide. Changing `prefix` starts a fresh series, since existing files stop
 If the counter file is ever corrupted the app refuses to run rather than starting a new sequence —
 delete it to have the sequence rebuilt from the receipts on disk.
 
+### Line-item columns and warranty (`fields.json`)
+
+`fields.json` sits beside `appsettings.json` and defines the columns of the item table. The list
+order is the column order, so adding, renaming, hiding or reordering a column needs no code:
+
+```json
+{
+  "line_item_fields": [
+    { "key": "sku",   "label": "SKU",        "type": "text",     "enabled": true },
+    { "key": "bay",   "label": "Bay",        "type": "text",     "enabled": true },
+    { "key": "qty",   "label": "Qty",        "type": "integer",  "enabled": true },
+    { "key": "price", "label": "Unit Price", "type": "amount",   "enabled": true },
+    { "key": "tax",   "label": "Tax",        "type": "amount",   "enabled": true,
+      "optional_column": true },
+    { "key": "amount","label": "Amount",     "type": "computed", "enabled": true }
+  ]
+}
+```
+
+- `type` decides both validation and presentation: `amount` and `computed` are right-aligned and
+  formatted with your currency, `integer` and `number` are right-aligned, everything else is
+  left-aligned and escaped. The full set is `text`, `multiline`, `integer`, `number`, `amount`,
+  `computed`, `date`, `select`, `boolean`, `phone`, `email`.
+- `enabled: false` hides a column.
+- `optional_column: true` shows it only when at least one line actually uses it — which is why an
+  unused Discount or Tax column stays off the receipt.
+- `key` becomes a template placeholder, so it must be letters, digits and underscores.
+
+**`qty`, `price` and `amount` can be hidden but not removed** — the totals are calculated from
+them. Deleting one is refused at startup with an explanation rather than producing a receipt whose
+figures do not add up.
+
+#### Warranty
+
+```json
+"warranty": {
+  "enabled": true,
+  "label": "Warranty",
+  "none_option": "No Warranty",
+  "options": [
+    "# Months Limited Warranty",
+    "7 Days Checking Warranty",
+    "No Warranty"
+  ]
+}
+```
+
+An option containing `#` prompts for a whole number when chosen, so one entry covers 12 months,
+24 months and anything else — `# Year International Warranty` works just as well. The number must
+be positive; blank, `0`, negative and non-numeric are rejected while the dialog stays open.
+
+`none_option` names the choice that means "no warranty on this line", and no note is printed for
+it. Reword it (in any language) and the receipt follows.
+
+The warranty is printed under the item description rather than in a column of its own. Set
+`enabled: false` to drop it from the item dialog entirely.
+
 ### Wording
 
 Words the app itself composes — column headings, the totals row labels, the marker printed in an

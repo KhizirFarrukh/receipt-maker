@@ -251,12 +251,40 @@ where patterns are introduced.
   checks used a throwaway key in a temp directory precisely so key creation stays the owner's.
   Set `signing.signer_name` in `appsettings.json` *before* running it.
 
-## Open items for Stage 5+
+## Phase G — Stage 5 (custom line-item fields + configurable warranty)
 
-- **Stage 5 — custom fields + configurable warranty** is next: `fields.json`-driven receipt and
-  line-item fields, the item dialog building itself from field definitions, and a warranty option
-  list where an option containing `#` prompts for a positive whole number. That last one finally
-  removes `NO_WARRANTY_LABEL`, the sentinel `receipt_render` and the GUI currently share.
+- [x] G1. `fields.json` — ordered `line_item_fields` (key/label/type/enabled/optional_column) plus
+      a `warranty` block. A **list is replaced wholesale, not deep-merged**: the list order is the
+      column order, and merging would make removing a field impossible.
+- [x] G2. `validate_fields()` — closed type set, duplicate keys, keys reserved by the renderer,
+      placeholder-safe key syntax, select-without-options, and the **arithmetic contract**:
+      `qty`/`price`/`amount` may be hidden but never removed, because the totals derive from them.
+- [x] G3. Renderer drives columns from the field list. `TYPE_PRESENTATION` maps type → alignment
+      and formatter, so a custom `amount` column is right-aligned and money-formatted with no
+      code change. Verified end to end: a custom text column *and* a custom money column render
+      correctly alongside the built-ins.
+- [x] G4. Configurable warranty. Options come from `fields.json`; an option containing `#`
+      prompts for a positive whole number (rejects blank/`0`/negative/non-numeric with the dialog
+      staying open). `none_option` replaces the hardcoded `"No Warranty"` sentinel, so a shop
+      wording it differently — or in another language — no longer gets a stray note on every line.
+      `match_warranty_option()` reverses a filled option so editing a saved item re-selects it.
+- [x] G5. Tests: **46 Stage 5 tests**, 271 total. Golden still byte-identical.
+
+**Not done in Stage 5, deliberately:**
+
+- `receipt_fields` (custom *receipt-level* fields, as opposed to line items) and the form building
+  itself from them. The line-item half is where the value is — that is the table that varies by
+  trade — and the receipt-level half needs `receipt_info.html` to grow a
+  `{{custom_receipt_fields|raw}}` block plus a form layout engine. Worth its own pass.
+- `default` / `sticky` values and `state.json`. The plan is explicit that the *renderer* must
+  never apply them (it would break purity and make the golden depend on `fields.json`), so this is
+  UI-side work that belongs with the form-building above.
+- The item dialog still lays out the built-in seven fields explicitly rather than generating rows
+  from the field list. Custom columns therefore render on the receipt but cannot yet be *typed in*
+  through the GUI — they arrive via the CLI/data path. This is the honest boundary of what landed.
+
+## Open items for Stage 6+
+
 - Store-specific copy still lives in `Templates/terms.html` and `Templates/footer.html` (Chawla
   Tech wording, chawlatech.pk links). These are now plain editable templates, so this is a
   content edit rather than a code change — but shipping them as the neutral default is still

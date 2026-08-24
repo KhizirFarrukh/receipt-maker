@@ -2,8 +2,8 @@
 
 **Purpose of this file:** a complete context dump so that if this chat is lost, a fresh AI agent
 can read this document (+ [`PLAN-generalization.md`](PLAN-generalization.md) in the same folder) and
-continue the work exactly where it was left off — currently: **Stages 2, 3 and 4 are done;
-Stage 5 is next.**
+continue the work exactly where it was left off — currently: **Stages 2, 3, 4 and most of 5 are
+done; finish Stage 5's receipt-level fields, then Stage 6.**
 
 **Read order for a new agent:** (1) this file top-to-bottom, (2) `PLAN-generalization.md` (the full
 approved plan / roadmap), (3) [`TASKS.md`](TASKS.md) (what the 2026-08-22/23 session did, and the
@@ -70,9 +70,21 @@ Tests: **212**. The concurrency test spawns 4 real OS processes taking 100 numbe
 and asserts they come back contiguous with no duplicates — keep it, it is the only thing actually
 proving the lock works.
 
-**Next: Stage 5** — custom fields + configurable warranty (`fields.json`, the item dialog built
-from field definitions, `#`-prompting warranty options). That stage removes the
-`NO_WARRANTY_LABEL` sentinel `receipt_render` and the GUI currently share.
+**Stage 5 is mostly done.** `fields.json` drives the line-item columns — add, rename, hide or
+reorder a column with no code, and `type` decides alignment and formatting so a custom `amount`
+column is right-aligned and money-formatted automatically. `qty`/`price`/`amount` may be hidden
+but not removed; `validate_fields()` refuses, because the totals derive from them. The warranty is
+now a configurable option list where `#` prompts for a positive whole number, and `none_option`
+replaced the hardcoded `"No Warranty"` sentinel.
+
+**What is left of Stage 5** (see TASKS.md Phase G for the reasoning): receipt-*level* custom
+fields, the form and item dialog generating their rows from the field list, and `default`/`sticky`
+values in `state.json`. Custom line-item columns therefore render on the receipt but cannot yet be
+typed in through the GUI. Note the plan's rule that the **renderer must never apply
+`default`/`sticky`** — doing so would break purity and make the golden depend on `fields.json`.
+
+Four bugs were found and fixed while reviewing Stage 4; each has a test in
+`tests/test_regressions.py` saying what it was protecting. Tests: **271**.
 
 ---
 

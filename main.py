@@ -143,6 +143,7 @@ class ReceiptApp:
         self.money_label = (str(currency.get("code", "")).strip()
                             or str(currency.get("symbol", "")).strip())
         self.type_labels = config.receipt_type_labels(settings)
+        self.fields = config.load_fields()
         root.title(f"{company['name']} - Receipt Generator")
         root.resizable(True, True)
         self._apply_scaling(root)
@@ -490,29 +491,45 @@ class ReceiptApp:
             ttk.Label(dialog, text=label).grid(row=i, column=0, padx=10, pady=5, sticky=tk.W)
             ttk.Entry(dialog, textvariable=var).grid(row=i, column=1, padx=10, pady=5)
 
-        # warranty: a type, plus a months count used only for "Months"
+        # Warranty options come from fields.json. An option containing "#"
+        # prompts for a whole number, so one entry covers 12 Months, 24 Months
+        # and anything else the shop offers.
+        warranty_cfg = self.fields.get("warranty", {})
+        warranty_options = [str(o) for o in warranty_cfg.get("options", []) if str(o).strip()]
         warranty_row = len(labels)
-        ttk.Label(dialog, text="Warranty").grid(row=warranty_row, column=0, padx=10, pady=5, sticky=tk.W)
-        warranty_type = tk.StringVar(value="Months")
-        warranty_combo = ttk.Combobox(
-            dialog,
-            textvariable=warranty_type,
-            values=["Months", "7 Days Checking", "No Warranty"],
-            state="readonly",
-            width=16,
-        )
-        warranty_combo.grid(row=warranty_row, column=1, padx=10, pady=5, sticky=tk.W)
+        warranty_type = tk.StringVar(value=warranty_options[0] if warranty_options else "")
+        warranty_number = tk.StringVar(value="12")
+        number_entry = None
 
-        months_row = warranty_row + 1
-        ttk.Label(dialog, text="Warranty Months").grid(row=months_row, column=0, padx=10, pady=5, sticky=tk.W)
-        warranty_months = tk.StringVar(value="12")
-        months_entry = ttk.Entry(dialog, textvariable=warranty_months, width=10)
-        months_entry.grid(row=months_row, column=1, padx=10, pady=5, sticky=tk.W)
+        if warranty_cfg.get("enabled", True) and warranty_options:
+            ttk.Label(dialog, text=warranty_cfg.get("label", "Warranty")).grid(
+                row=warranty_row, column=0, padx=10, pady=5, sticky=tk.W)
+            warranty_combo = ttk.Combobox(
+                dialog,
+                textvariable=warranty_type,
+                values=warranty_options,
+                state="readonly",
+                width=28,
+            )
+            warranty_combo.grid(row=warranty_row, column=1, padx=10, pady=5, sticky=tk.W)
+
+            number_row = warranty_row + 1
+            ttk.Label(dialog, text="Warranty Number").grid(
+                row=number_row, column=0, padx=10, pady=5, sticky=tk.W)
+            number_entry = ttk.Entry(dialog, textvariable=warranty_number, width=10)
+            number_entry.grid(row=number_row, column=1, padx=10, pady=5, sticky=tk.W)
+            months_row = number_row
+        else:
+            months_row = warranty_row - 1        # nothing shown; keep the layout tight
 
         def on_warranty_type_change(event=None):
-            months_entry.configure(state="normal" if warranty_type.get() == "Months" else "disabled")
+            if number_entry is None:
+                return
+            needed = config.warranty_option_needs_number(warranty_type.get())
+            number_entry.configure(state="normal" if needed else "disabled")
 
-        warranty_combo.bind("<<ComboboxSelected>>", on_warranty_type_change)
+        if warranty_cfg.get("enabled", True) and warranty_options:
+            warranty_combo.bind("<<ComboboxSelected>>", on_warranty_type_change)
 
         # pre-fill the fields when editing an existing row
         if editing:
@@ -520,10 +537,11 @@ class ReceiptApp:
             sku0, desc0, serial0, qty0, price0, discount0, tax0, warranty0 = current
             for var, value in zip(vars_, (sku0, desc0, serial0, qty0, price0, discount0, tax0)):
                 var.set("" if value is None else str(value))
-            wtype, wmonths = self.parse_warranty_text(str(warranty0))
-            warranty_type.set(wtype)
-            if wmonths:
-                warranty_months.set(wmonths)
+            option, number = self.match_warranty_option(str(warranty0), warranty_options)
+            if option:
+                warranty_type.set(option)
+            if number:
+                warranty_number.set(number)
         on_warranty_type_change()
 
         def save():
@@ -550,7 +568,8 @@ class ReceiptApp:
                 messagebox.showerror("Error", "Discount and Tax cannot be negative.", parent=dialog)
                 return
 
-            warranty = self.build_warranty_text(warranty_type.get(), warranty_months.get().strip(), dialog)
+            warranty = self.resolve_warranty(
+                warranty_type.get(), warranty_number.get().strip(), dialog)
             if warranty is None:
                 return
 
@@ -581,36 +600,50 @@ class ReceiptApp:
         self.root.wait_window(dialog)
 
     @staticmethod
-    def build_warranty_text(warranty_type, months_raw, parent=None):
-        """Return the warranty label string, or None if validation failed."""
-        if warranty_type == "7 Days Checking":
-            return "7 Days Checking Warranty"
-        if warranty_type == "No Warranty":
-            return "No Warranty"
+    def resolve_warranty(option, number_raw, parent=None):
+        """Turn the chosen option into the text printed on the receipt.
 
-        # "Months": require a positive whole number.
+        Returns None when validation failed (the dialog stays open). An option
+        containing '#' needs a positive whole number: blank, 0, negative and
+        non-numeric are all rejected, because "0 Months Warranty" on a receipt is
+        worse than no warranty line at all.
+        """
+        if not config.warranty_option_needs_number(option):
+            return option
+
         try:
-            months = int(months_raw)
+            number = int(str(number_raw).strip())
         except ValueError:
-            messagebox.showerror("Error", "Warranty months must be a positive whole number.", parent=parent)
+            number = 0
+        if number <= 0:
+            messagebox.showerror(
+                "Error",
+                f"“{option}” needs a positive whole number in place of the #.",
+                parent=parent)
             return None
-        if months <= 0:
-            messagebox.showerror("Error", "Warranty months must be a positive whole number.", parent=parent)
-            return None
-
-        unit = "Month" if months == 1 else "Months"
-        return f"{months} {unit} Limited Warranty"
+        return config.fill_warranty_number(option, number)
 
     @staticmethod
-    def parse_warranty_text(warranty):
-        """Reverse of build_warranty_text: -> (warranty_type, months_str)."""
-        text = (warranty or "").strip()
-        if "7 Days Checking" in text:
-            return ("7 Days Checking", "")
-        match = re.match(r"^(\d+)\s+Months?\b", text)
-        if match:
-            return ("Months", match.group(1))
-        return ("No Warranty", "")
+    def match_warranty_option(text, options):
+        """Best-effort reverse of resolve_warranty, for re-opening a saved item.
+
+        Returns (option, number). An exact match wins; otherwise a '#' option is
+        matched by turning it into a pattern, so "12 Months Limited Warranty"
+        re-selects "# Months Limited Warranty" with 12 in the number box.
+        """
+        text = (text or "").strip()
+        for option in options:
+            if option == text:
+                return option, ""
+        for option in options:
+            if not config.warranty_option_needs_number(option):
+                continue
+            pattern = "^" + r"(\d+)".join(
+                re.escape(part) for part in str(option).split("#", 1)) + "$"
+            match = re.match(pattern, text)
+            if match:
+                return option, match.group(1)
+        return "", ""
 
     def remove_item(self):
         selected = self.items_tree.selection()

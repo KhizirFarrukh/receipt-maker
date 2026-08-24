@@ -250,6 +250,59 @@ DEFAULT_APP_SETTINGS = {
     },
 }
 
+FIELDS_FILE_NAME = "fields.json"
+
+#: The closed set of field types. `type` drives presentation as well as
+#: validation -- a dynamically generated column has to know on its own whether to
+#: right-align and format as money or left-align and wrap.
+FIELD_TYPES = ("text", "multiline", "integer", "number", "amount", "computed",
+               "date", "select", "boolean", "phone", "email")
+
+#: Line-item keys the arithmetic depends on. They can be *hidden* (shown as no
+#: column) but never removed or retyped, because the receipt's totals are
+#: computed from them. validate() enforces this.
+BUILTIN_LINE_ITEM_KEYS = ("qty", "price", "amount")
+
+#: Names the renderer and the template engine already use for their own values.
+#: A custom field taking one of these would silently shadow it mid-render.
+RESERVED_FIELD_KEYS = frozenset({
+    "value", "css_class", "note", "label", "styles", "font_faces", "terms",
+    "resource_base", "receipt_info", "items_table", "totals", "totals_rows",
+    "header_cells", "rows", "type_badge", "warranty",
+})
+
+#: Shipped field definitions. These reproduce today's form and receipt exactly;
+#: `enabled: false` hides a column, and `optional_column` keeps the old
+#: behaviour where Discount and Tax appear only when a line actually uses them.
+DEFAULT_FIELDS = {
+    SCHEMA_VERSION_KEY: 1,
+    "line_item_fields": [
+        {"key": "sku", "label": "SKU", "type": "text", "enabled": True},
+        {"key": "desc", "label": "Item Description", "type": "text",
+         "enabled": True, "required": True},
+        {"key": "serial", "label": "Serial Number", "type": "text", "enabled": True},
+        {"key": "qty", "label": "Qty", "type": "integer", "enabled": True, "default": "1"},
+        {"key": "price", "label": "Unit Price", "type": "amount", "enabled": True},
+        {"key": "discount", "label": "Discount", "type": "amount",
+         "enabled": True, "optional_column": True},
+        {"key": "tax", "label": "Tax", "type": "amount",
+         "enabled": True, "optional_column": True},
+        {"key": "amount", "label": "Amount", "type": "computed", "enabled": True},
+    ],
+    # An option containing "#" prompts for a positive whole number when chosen,
+    # so one entry covers "12 Months", "24 Months" and so on.
+    "warranty": {
+        "enabled": True,
+        "label": "Warranty",
+        "none_option": "No Warranty",
+        "options": [
+            "# Months Limited Warranty",
+            "7 Days Checking Warranty",
+            "No Warranty",
+        ],
+    },
+}
+
 STRINGS_FILE_NAME = "strings.json"
 
 #: Words the *renderer* produces, as opposed to words a template author types
@@ -808,6 +861,141 @@ def date_parse_formats(settings=None):
     formats = [configured]
     formats.extend(f for f in DATE_PARSE_FORMATS if f != configured)
     return tuple(formats)
+
+
+def fields_file():
+    return os.path.join(APP_DIR, FIELDS_FILE_NAME)
+
+
+def default_fields():
+    return json.loads(json.dumps(DEFAULT_FIELDS))   # deep copy
+
+
+def load_fields(path=None):
+    """Load fields.json, validated, falling back to the shipped definitions.
+
+    Unlike appsettings, a *list* here is replaced wholesale rather than merged:
+    the order of the list is the order of the columns, and a deep-merge would
+    make removing a field impossible.
+    """
+    path = path or fields_file()
+    if not os.path.exists(path):
+        try:
+            atomic_write_json(path, DEFAULT_FIELDS, keep_backup=False)
+        except OSError:
+            pass
+        return default_fields()
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"could not be read: {exc}", path) from exc
+    if not isinstance(raw, dict):
+        raise ConfigError("expected a JSON object at the top level", path)
+
+    fields = default_fields()
+    for key in ("line_item_fields",):
+        if key in raw:
+            fields[key] = raw[key]
+    if isinstance(raw.get("warranty"), dict):
+        fields["warranty"] = deep_merge(DEFAULT_FIELDS["warranty"], raw["warranty"])
+    validate_fields(fields, path)
+    return fields
+
+
+def validate_fields(fields, filename=None):
+    """Raise ConfigError on a field definition that could not render. Returns fields."""
+    filename = filename or fields_file()
+
+    items = fields.get("line_item_fields")
+    if not isinstance(items, list) or not items:
+        raise ConfigError("must be a non-empty list", filename, "line_item_fields")
+
+    seen = {}
+    for index, field in enumerate(items):
+        where = f"line_item_fields[{index}]"
+        if not isinstance(field, dict):
+            raise ConfigError("must be an object", filename, where)
+
+        key = str(field.get("key", "")).strip()
+        if not key:
+            raise ConfigError("must have a key", filename, f"{where}.key")
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            raise ConfigError(
+                f"must be letters, digits and underscores, starting with a letter "
+                f"(got {key!r}) -- the key becomes a template placeholder",
+                filename, f"{where}.key")
+        if key in seen:
+            raise ConfigError(
+                f"duplicate key {key!r} (already used by {seen[key]}) -- two "
+                f"columns cannot share one key",
+                filename, f"{where}.key")
+        if key in RESERVED_FIELD_KEYS:
+            raise ConfigError(
+                f"{key!r} is reserved by the renderer and would shadow one of its "
+                f"own values. Pick another key.",
+                filename, f"{where}.key")
+        seen[key] = where
+
+        field_type = field.get("type", "text")
+        if field_type not in FIELD_TYPES:
+            raise ConfigError(
+                f"must be one of {', '.join(FIELD_TYPES)} (got {field_type!r})",
+                filename, f"{where}.type")
+        if not str(field.get("label", "")).strip():
+            raise ConfigError(
+                "must have a label -- it is the column heading",
+                filename, f"{where}.label")
+        for flag in ("enabled", "required", "optional_column"):
+            if not isinstance(field.get(flag, False), bool):
+                raise ConfigError("must be true or false", filename, f"{where}.{flag}")
+        if field_type == "select":
+            options = field.get("options")
+            if not isinstance(options, list) or not options:
+                raise ConfigError(
+                    "a select field needs a non-empty list of options",
+                    filename, f"{where}.options")
+
+    # The arithmetic contract: the totals are derived from these, so they may be
+    # hidden but never deleted or retyped into something that cannot be summed.
+    for key in BUILTIN_LINE_ITEM_KEYS:
+        if key not in seen:
+            raise ConfigError(
+                f"the built-in field {key!r} is missing. It can be hidden with "
+                f'"enabled": false, but the receipt totals are calculated from '
+                f"it, so it cannot be removed.",
+                filename, "line_item_fields")
+
+    warranty = fields.get("warranty")
+    if not isinstance(warranty, dict):
+        raise ConfigError("must be an object", filename, "warranty")
+    if not isinstance(warranty.get("enabled", True), bool):
+        raise ConfigError("must be true or false", filename, "warranty.enabled")
+    if warranty.get("enabled", True):
+        options = warranty.get("options")
+        if not isinstance(options, list) or not [o for o in options if str(o).strip()]:
+            raise ConfigError(
+                "warranty is enabled, so it needs at least one option "
+                "(or set warranty.enabled to false)", filename, "warranty.options")
+        for index, option in enumerate(options):
+            if not isinstance(option, str):
+                raise ConfigError("must be text", filename, f"warranty.options[{index}]")
+            if option.count("#") > 1:
+                raise ConfigError(
+                    f"may contain at most one '#' placeholder (got {option!r})",
+                    filename, f"warranty.options[{index}]")
+    return fields
+
+
+def warranty_option_needs_number(option):
+    """True when choosing this option should prompt for a whole number."""
+    return "#" in str(option)
+
+
+def fill_warranty_number(option, number):
+    """Substitute a chosen number into a '#' warranty option."""
+    return str(option).replace("#", str(number), 1)
 
 
 def strings_file():

@@ -357,25 +357,33 @@ def format_amount(value, currency=None, group=True):
 
 
 # ------------------- line-item columns -------------------
-# (key, css class, optional). "optional" columns appear only when at least one
-# line uses them. Headings come from strings.json, not from here (principle 3).
-# The renderer walks this list for both the header row and every body row, so
-# adding or hiding a column needs no template edit -- which is what lets Stage 5
-# drive it from fields.json.
-ITEM_COLUMNS = (
-    ("sku",      "",    False),
-    ("desc",     "",    False),
-    ("serial",   "",    False),
-    ("qty",      "num", False),
-    ("price",    "num", False),
-    ("discount", "num", True),
-    ("tax",      "num", True),
-    ("amount",   "num", False),
-)
+# Columns come from fields.json, so adding, hiding or reordering one needs no
+# code and no template edit. `type` decides presentation as well as validation:
+# a dynamically generated column has to work out on its own whether to
+# right-align and format as money, or left-align and wrap.
+#
+#   type -> (css class, how the cell value is produced)
+TYPE_PRESENTATION = {
+    "text":      ("",    "plain"),
+    "multiline": ("",    "lines"),
+    "select":    ("",    "plain"),
+    "phone":     ("",    "plain"),
+    "email":     ("",    "plain"),
+    "date":      ("",    "plain"),
+    "boolean":   ("",    "boolean"),
+    "integer":   ("num", "plain"),
+    "number":    ("num", "plain"),
+    "amount":    ("num", "money"),
+    "computed":  ("num", "money"),
+}
 
-#: Sentinel meaning "print no warranty note for this line". Shared with the GUI's
-#: warranty dropdown, which writes this exact text; Stage 5 replaces both with a
-#: configurable option list, at which point this goes away.
+#: Keys whose value the renderer computes rather than reads from the item.
+DERIVED_KEYS = {"amount"}
+
+#: Fallback for "this line carries no warranty, print no note". The real value
+#: comes from fields.json (`warranty.none_option`) so a shop that words it
+#: differently -- or in another language -- does not get a stray note on every
+#: line. Kept as a module constant only for callers that render without config.
 NO_WARRANTY_LABEL = "No Warranty"
 
 # ------------------- template blocks -------------------
@@ -465,11 +473,12 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
         currency=settings.get("currency"),
         terms=settings.get("terms_page", {}).get("enabled", True),
         tax_config=settings.get("tax"),
+        fields=config.load_fields(),
     )
 
 
 def render_receipt(data, templates, resource_base="", font_faces="", strings=None,
-                   currency=None, terms=True, tax_config=None):
+                   currency=None, terms=True, tax_config=None, fields=None):
     """Pure render: (data, templates, strings, currency) -> html.
 
     No clock, no IO, no globals. Everything non-deterministic (the resource base
@@ -477,6 +486,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     injected by the caller -- principle 2.
     """
     strings = strings or config.default_strings()
+    fields = fields if fields is not None else config.default_fields()
     currency = currency if currency is not None else config.DEFAULT_APP_SETTINGS["currency"]
     decimals = currency.get("decimals", AMOUNT_DECIMALS)
     group_lines = currency.get("group_line_amounts", True)
@@ -485,25 +495,28 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     empty_cell = strings.get("empty_cell", "-")
     items = data.get("items") or []
 
+    none_warranty = fields.get("warranty", {}).get("none_option", NO_WARRANTY_LABEL)
+
     # --- line items -----------------------------------------------------
-    used = {key for key, _cls, optional in ITEM_COLUMNS if not optional}
-    for key, _cls, optional in ITEM_COLUMNS:
-        if optional and any(quantize(item.get(key, 0), decimals) for item in items):
-            used.add(key)
-    columns = [col for col in ITEM_COLUMNS if col[0] in used]
+    columns = visible_columns(fields, items, decimals)
 
     header_cells = "".join(
-        _block(templates, "item_header_cell.html",
-               {"label": column_labels.get(key, key), "css_class": css})
-        for key, css, _optional in columns
+        _block(templates, "item_header_cell.html", {
+            # fields.json owns the heading; strings.json is consulted only so an
+            # existing translation of the built-in columns keeps working.
+            "label": field.get("label") or column_labels.get(field["key"], field["key"]),
+            "css_class": _css_class(field),
+        })
+        for field in columns
     )
 
     rows = []
     for item in items:
         cells = "".join(
             _block(templates, "item_row_cell.html",
-                   _cell_context(item, key, css, empty_cell, currency, group_lines))
-            for key, css, _optional in columns
+                   _cell_context(item, field, empty_cell, currency, group_lines,
+                                 strings, none_warranty))
+            for field in columns
         )
         rows.append(f"<tr>{cells}</tr>")
 
@@ -695,30 +708,66 @@ def build_font_faces(fonts):
     return "\n" + "\n".join(faces)
 
 
-def _cell_context(item, key, css_class, empty_cell="-", currency=None, group=True):
+def _css_class(field):
+    return TYPE_PRESENTATION.get(field.get("type", "text"), ("", "plain"))[0]
+
+
+def visible_columns(fields, items, decimals):
+    """The line-item columns this receipt actually shows, in configured order.
+
+    A disabled field is never shown. An `optional_column` is shown only when at
+    least one line uses it, which is what keeps an unused Discount or Tax column
+    off an otherwise clean receipt.
+    """
+    columns = []
+    for field in fields.get("line_item_fields", []):
+        if not field.get("enabled", True):
+            continue
+        if field.get("optional_column"):
+            key = field["key"]
+            if not any(quantize(item.get(key, 0), decimals) for item in items):
+                continue
+        columns.append(field)
+    return columns
+
+
+def _cell_context(item, field, empty_cell="-", currency=None, group=True,
+                  strings=None, none_warranty=NO_WARRANTY_LABEL):
     """Precompute one cell's finished strings -- templates make no decisions."""
     currency = currency or {}
+    strings = strings or {}
     decimals = currency.get("decimals", AMOUNT_DECIMALS)
+    key = field["key"]
+    style = TYPE_PRESENTATION.get(field.get("type", "text"), ("", "plain"))[1]
+
+    if key in DERIVED_KEYS:
+        raw = to_decimal(item.get("qty", 0)) * to_decimal(item.get("price", 0))
+    else:
+        raw = item.get(key, "")
+
+    if style == "money":
+        rounded = quantize(raw, decimals)
+        # An optional money column prints a marker rather than a bare zero, so an
+        # unused per-line discount does not read as "discounted by nothing".
+        value = (format_amount(rounded, currency, group)
+                 if rounded or not field.get("optional_column") else empty_cell)
+    elif style == "boolean":
+        yes_no = strings.get("boolean", {})
+        value = yes_no.get("yes", "Yes") if raw else yes_no.get("no", "No")
+    elif style == "lines":
+        value = str(raw or "")
+    else:
+        value = str(raw if raw != "" else "") or (empty_cell if raw == "" else str(raw))
+
+    # The warranty rides under the description rather than taking a column of
+    # its own, which is why it is a note instead of a field.
     note = ""
     if key == "desc":
         warranty = str(item.get("warranty", "") or "")
-        if warranty and warranty != NO_WARRANTY_LABEL:
+        if warranty and warranty != none_warranty:
             note = warranty
-        value = item.get("desc", "")
-    elif key == "qty":
-        value = item.get("qty", "")
-    elif key == "price":
-        value = format_amount(item.get("price", 0), currency, group)
-    elif key == "amount":
-        line_total = to_decimal(item.get("qty", 0)) * to_decimal(item.get("price", 0))
-        value = format_amount(line_total, currency, group)
-    elif key in ("discount", "tax"):
-        raw = quantize(item.get(key, 0), decimals)
-        value = format_amount(raw, currency, group) if raw else empty_cell
-    else:  # sku, serial -- plain text with the empty marker when blank
-        value = str(item.get(key, "") or "") or empty_cell
 
-    return {"value": value, "css_class": css_class, "note": note}
+    return {"value": value, "css_class": _css_class(field), "note": note}
 
 
 def warranty_policy_html():

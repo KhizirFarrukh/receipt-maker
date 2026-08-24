@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "line_item_fields": [
+    {
+      "key": "sku",
+      "label": "SKU",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "desc",
+      "label": "Item Description",
+      "type": "text",
+      "enabled": true,
+      "required": true
+    },
+    {
+      "key": "serial",
+      "label": "Serial Number",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "qty",
+      "label": "Qty",
+      "type": "integer",
+      "enabled": true,
+      "default": "1"
+    },
+    {
+      "key": "price",
+      "label": "Unit Price",
+      "type": "amount",
+      "enabled": true
+    },
+    {
+      "key": "discount",
+      "label": "Discount",
+      "type": "amount",
+      "enabled": true,
+      "optional_column": true
+    },
+    {
+      "key": "tax",
+      "label": "Tax",
+      "type": "amount",
+      "enabled": true,
+      "optional_column": true
+    },
+    {
+      "key": "amount",
+      "label": "Amount",
+      "type": "computed",
+      "enabled": true
+    }
+  ],
+  "warranty": {
+    "enabled": true,
+    "label": "Warranty",
+    "none_option": "No Warranty",
+    "options": [
+      "# Months Limited Warranty",
+      "7 Days Checking Warranty",
+      "No Warranty"
+    ]
+  }
+}
