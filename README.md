@@ -361,10 +361,42 @@ order is the column order, so adding, renaming, hiding or reordering a column ne
 - `optional_column: true` shows it only when at least one line actually uses it — which is why an
   unused Discount or Tax column stays off the receipt.
 - `key` becomes a template placeholder, so it must be letters, digits and underscores.
+- `required: true` blocks saving the item until the field is filled in (the label gets a `*`).
+- `sticky: true` remembers the last value entered and pre-fills it on the next item — useful for
+  a field that repeats across a whole sale. Remembered values live in `state.json`, which is
+  machine state rather than configuration.
+- `default` pre-fills a new item when nothing is remembered.
+
+Columns are also the **item form**: adding a field here adds a row to the Add/Edit Item dialog,
+with a widget picked from its type — a dropdown for `select`, a checkbox for `boolean`, a
+validated entry for numbers.
+
+Hiding a *built-in* (`qty`, `price`, `amount`) removes its column from the receipt but keeps it on
+the form, since the totals still need the value. Hiding a *custom* field removes it from both.
 
 **`qty`, `price` and `amount` can be hidden but not removed** — the totals are calculated from
 them. Deleting one is refused at startup with an explanation rather than producing a receipt whose
 figures do not add up.
+
+#### Receipt-level fields
+
+`receipt_fields` adds lines under the "Bill To" box — a PO number, a salesperson, a vehicle
+registration, a deposit already paid:
+
+```json
+"receipt_fields": [
+  { "key": "po_number",   "label": "PO Number",    "type": "text",   "enabled": true },
+  { "key": "salesperson", "label": "Served by",    "type": "text",   "enabled": true },
+  { "key": "deposit",     "label": "Deposit paid", "type": "amount", "enabled": true }
+]
+```
+
+They take the same options as line-item fields, and an `amount` is formatted with your currency.
+**A field left empty prints nothing at all** — no dangling label. Style the block through
+`.receipt-fields`, `.receipt-field` and `.field-label` in `Templates/styles.css`, or restructure
+it in `Templates/field_row.html`.
+
+A key may not be used in both lists: they share one render context, so it would be ambiguous.
 
 #### Warranty
 

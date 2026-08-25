@@ -267,3 +267,7 @@ Templates/.installed.json
 tests/fixtures/env/Templates/
 tests/fixtures/env/invoices/
 tests/fixtures/env/*.bak
+
+# Remembered machine state (sticky values). Per-install, not source.
+state.json
+tests/fixtures/env/state.json

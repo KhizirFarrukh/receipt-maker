@@ -77,14 +77,32 @@ but not removed; `validate_fields()` refuses, because the totals derive from the
 now a configurable option list where `#` prompts for a positive whole number, and `none_option`
 replaced the hardcoded `"No Warranty"` sentinel.
 
-**What is left of Stage 5** (see TASKS.md Phase G for the reasoning): receipt-*level* custom
-fields, the form and item dialog generating their rows from the field list, and `default`/`sticky`
-values in `state.json`. Custom line-item columns therefore render on the receipt but cannot yet be
-typed in through the GUI. Note the plan's rule that the **renderer must never apply
-`default`/`sticky`** — doing so would break purity and make the golden depend on `fields.json`.
+**Stage 5 is now complete.** The item tree and Add/Edit dialog generate themselves from
+`line_item_fields` (widget chosen by type), `receipt_fields` adds lines under the Bill To box, and
+`default`/`sticky` work through `state.json`. Rules a later change must not quietly invert:
+
+- `enabled` controls whether a column is **printed**, not whether it is **entered**. A hidden
+  built-in (`qty`/`price`/`amount`) stays on the form because the totals need it; a hidden custom
+  field leaves the form entirely.
+- The **renderer never applies `default`/`sticky`** — that would break purity and make the golden
+  depend on `fields.json`. It is UI-side only.
+- `row_to_item` / `item_to_row` in `main.py` are the only place the tree's positional storage is
+  mapped to field keys. Letting that drift shifts values into the wrong column, silently, on a
+  document that goes to a customer.
+- `state.json` is excluded from migration, `.bak` and mtime-conflict checks on purpose, and
+  loading it never raises.
+
+**The golden was regenerated once, deliberately**, when `.receipt-fields` styling was added to
+`styles.css`. The diff was inspected first: exactly nine CSS lines, no change to the receipt body.
+It had held byte-identical from Stage 2 through Stage 5 until then.
 
 Four bugs were found and fixed while reviewing Stage 4; each has a test in
-`tests/test_regressions.py` saying what it was protecting. Tests: **271**.
+`tests/test_regressions.py` saying what it was protecting. Tests: **302**.
+
+**Next: Stage 6** — signing enhancements (bring-your-own key across the PKCS#8/PKCS#1/encrypted-PEM
+/PKCS#12 format matrix, a Tools → Signing Keys dialog, a known-cert set so key rotation preserves
+historical verification, and the decorative image signature). Then Stage 7 (archive sidecar +
+diagnostics) and Stage 8 (polish, filename patterns, reprint).
 
 ---
 

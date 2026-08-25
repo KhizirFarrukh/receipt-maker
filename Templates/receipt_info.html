@@ -13,4 +13,7 @@
     {{customer_name}}<br/>
     {{#if customer_phone}}Phone: {{customer_phone}}<br/>{{/if}}
     {{#if customer_email}}Email: {{customer_email}}{{/if}}
-</div>
+</div>{{#if custom_receipt_fields}}
+<div class="receipt-fields">
+{{custom_receipt_fields|raw}}
+</div>{{/if}}

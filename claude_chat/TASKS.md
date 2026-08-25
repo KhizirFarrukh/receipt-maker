@@ -270,18 +270,37 @@ where patterns are introduced.
       `match_warranty_option()` reverses a filled option so editing a saved item re-selects it.
 - [x] G5. Tests: **46 Stage 5 tests**, 271 total. Golden still byte-identical.
 
-**Not done in Stage 5, deliberately:**
+- [x] G6. **Item form generated from the field list.** The tree columns and the Add/Edit Item
+      dialog both build from `line_item_fields`, with the widget chosen by type (dropdown for
+      `select`, checkbox for `boolean`, validated entry for numbers). Custom columns can now be
+      *typed in*, not just printed — closing the gap the first half of Stage 5 left open.
+      `row_to_item` / `item_to_row` are the single place the tree's positional storage is mapped
+      to keys; letting that drift would silently shift values into the wrong column.
+      **The rule that is easy to get backwards:** `enabled` controls whether a column is
+      *printed*, not whether it is *entered*. Hiding built-in Unit Price is a legitimate layout
+      choice, but the price must still be typed or the totals have nothing to work from — so a
+      hidden built-in stays on the form while a hidden custom field leaves it.
+- [x] G7. `receipt_fields` — receipt-level extras rendered under the Bill To box via
+      `Templates/field_row.html`. An empty field prints nothing, so an unfilled optional field
+      leaves no dangling label. Keys are validated across *both* lists, since they share one
+      render context.
+- [x] G8. `default` / `sticky` with `state.json`. State is deliberately excluded from migration,
+      `.bak` and mtime-conflict checks — it changes on every receipt, so treating it as config
+      would churn backups and make genuine conflict detection meaningless. Loading never raises:
+      losing remembered values must not stop a receipt being issued. Only fields *still* marked
+      sticky pre-fill, so un-marking one takes effect immediately.
+      Per the plan, the **renderer never applies default/sticky** — that stays UI-side, or purity
+      breaks and the golden starts depending on `fields.json`.
 
-- `receipt_fields` (custom *receipt-level* fields, as opposed to line items) and the form building
-  itself from them. The line-item half is where the value is — that is the table that varies by
-  trade — and the receipt-level half needs `receipt_info.html` to grow a
-  `{{custom_receipt_fields|raw}}` block plus a form layout engine. Worth its own pass.
-- `default` / `sticky` values and `state.json`. The plan is explicit that the *renderer* must
-  never apply them (it would break purity and make the golden depend on `fields.json`), so this is
-  UI-side work that belongs with the form-building above.
-- The item dialog still lays out the built-in seven fields explicitly rather than generating rows
-  from the field list. Custom columns therefore render on the receipt but cannot yet be *typed in*
-  through the GUI — they arrive via the CLI/data path. This is the honest boundary of what landed.
+**The golden moved for the first time, deliberately.** Adding `.receipt-fields` styling to
+`Templates/styles.css` changes the embedded stylesheet. The diff was inspected before accepting:
+**exactly nine CSS lines, no change to the receipt body** — confirming that with no custom receipt
+fields configured the document is otherwise identical. Regenerated on purpose, not to make a
+failing test pass.
+
+**Still not done (Stage 8 territory):** the receipt-level fields render but have no generated
+*form* rows yet — they arrive through the data path. The item dialog is generated; the main window
+form is still the fixed customer/phone/email layout.
 
 ## Open items for Stage 6+
 

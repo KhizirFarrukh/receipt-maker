@@ -310,6 +310,319 @@ class FieldValidation(unittest.TestCase):
                                                  "warranty": {"enabled": False}})
 
 
+class FieldValueCleaning(unittest.TestCase):
+    """Entered values are validated by declared type, custom fields included."""
+
+    def clean(self, field, raw):
+        import main
+        return main.ReceiptApp.clean_field_value(main.ReceiptApp, field, raw)
+
+    def test_amount_is_normalised_to_two_places(self):
+        value, error = self.clean({"key": "p", "label": "P", "type": "amount"}, "2.5")
+        self.assertEqual((value, error), ("2.50", None))
+
+    def test_amount_rejects_text(self):
+        _, error = self.clean({"key": "p", "label": "Price", "type": "amount"}, "free")
+        self.assertIn("Price", error)
+        self.assertIn("number", error)
+
+    def test_amount_rejects_negative(self):
+        _, error = self.clean({"key": "p", "label": "Price", "type": "amount"}, "-1")
+        self.assertIn("negative", error)
+
+    def test_integer_rejects_a_decimal(self):
+        _, error = self.clean({"key": "q", "label": "Qty", "type": "integer"}, "1.5")
+        self.assertIn("whole number", error)
+
+    def test_required_blank_is_refused(self):
+        _, error = self.clean(
+            {"key": "d", "label": "Description", "type": "text", "required": True}, "  ")
+        self.assertIn("Description is required", error)
+
+    def test_blank_qty_defaults_to_one(self):
+        """Quantity is the one field where a blank has an obvious right answer."""
+        value, error = self.clean({"key": "qty", "label": "Qty", "type": "integer"}, "")
+        self.assertEqual((value, error), (1, None))
+
+    def test_blank_amount_is_zero(self):
+        value, error = self.clean({"key": "tax", "label": "Tax", "type": "amount"}, "")
+        self.assertEqual((value, error), (0, None))
+
+    def test_blank_optional_text_stays_blank(self):
+        value, error = self.clean({"key": "sku", "label": "SKU", "type": "text"}, "")
+        self.assertEqual((value, error), ("", None))
+
+    def test_select_rejects_a_value_off_the_list(self):
+        field = {"key": "c", "label": "Condition", "type": "select",
+                 "options": ["New", "Used"]}
+        _, error = self.clean(field, "Refurbished")
+        self.assertIn("must be one of", error)
+        self.assertEqual(self.clean(field, "Used"), ("Used", None))
+
+
+class TreeRowRoundTrip(unittest.TestCase):
+    """The tree stores rows positionally, so this mapping is load-bearing.
+
+    If it drifts from the column ordering, values land in the wrong column --
+    silently, and on a document that goes to a customer.
+    """
+
+    def build(self, fields):
+        import tkinter as tk
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        app = main.ReceiptApp(root)
+        app.fields = fields
+        app.input_fields = main.ReceiptApp._entry_fields(app)
+        app.warranty_enabled = bool(fields.get("warranty", {}).get("options"))
+        return app, root
+
+    def test_round_trip_with_the_default_fields(self):
+        app, root = self.build(config.default_fields())
+        try:
+            item = {"sku": "A", "desc": "D", "serial": "S", "qty": 2,
+                    "price": "1.00", "discount": "0.00", "tax": "0.00",
+                    "warranty": "No Warranty"}
+            self.assertEqual(app.row_to_item(app.item_to_row(item)), item)
+        finally:
+            root.destroy()
+
+    def test_round_trip_with_a_custom_field(self):
+        fields = config.default_fields()
+        fields["line_item_fields"].insert(1, {
+            "key": "bay", "label": "Bay", "type": "text", "enabled": True})
+        app, root = self.build(fields)
+        try:
+            row = app.item_to_row({"sku": "A", "bay": "B-12", "desc": "D"})
+            self.assertEqual(row[1], "B-12", "the custom column must sit where it was ordered")
+            self.assertEqual(app.row_to_item(row)["bay"], "B-12")
+        finally:
+            root.destroy()
+
+    def test_hidden_builtin_is_still_enterable(self):
+        """Hiding Unit Price is a layout choice; the price still has to be typed."""
+        fields = config.default_fields()
+        for field in fields["line_item_fields"]:
+            if field["key"] == "price":
+                field["enabled"] = False
+        app, root = self.build(fields)
+        try:
+            keys = [f["key"] for f in app.input_fields]
+            self.assertIn("price", keys)
+        finally:
+            root.destroy()
+
+    def test_hidden_custom_field_leaves_the_form(self):
+        fields = config.default_fields()
+        fields["line_item_fields"].append({
+            "key": "bay", "label": "Bay", "type": "text", "enabled": False})
+        app, root = self.build(fields)
+        try:
+            self.assertNotIn("bay", [f["key"] for f in app.input_fields])
+        finally:
+            root.destroy()
+
+    def test_computed_fields_are_never_entered(self):
+        app, root = self.build(config.default_fields())
+        try:
+            self.assertNotIn("amount", [f["key"] for f in app.input_fields],
+                             "amount is qty x price; entering it would let them disagree")
+        finally:
+            root.destroy()
+
+
+class CustomFieldReachesGeneration(unittest.TestCase):
+    """End to end: a custom column typed into the tree arrives at the renderer."""
+
+    def test_custom_value_is_collected_by_generate_pdf(self):
+        import tkinter as tk
+        import main
+
+        fields = config.default_fields()
+        fields["line_item_fields"].insert(1, {
+            "key": "bay", "label": "Bay", "type": "text", "enabled": True})
+
+        root = tk.Tk()
+        root.withdraw()
+        captured = {}
+        try:
+            app = main.ReceiptApp(root)
+            app.fields = fields
+            app.input_fields = main.ReceiptApp._entry_fields(app)
+            app.warranty_enabled = True
+            app._run_generation = lambda d, out, reserved=None: captured.update(data=d)
+            app._claim_invoice_number = lambda typed: (typed, None)
+
+            app.items_tree.configure(
+                columns=[f["key"] for f in app.input_fields] + ["warranty"])
+            app.items_tree.insert("", tk.END, values=app.item_to_row({
+                "sku": "A1", "bay": "B-12", "desc": "Thing", "serial": "S",
+                "qty": "2", "price": "10.00", "discount": "0", "tax": "0",
+                "warranty": "No Warranty"}))
+            app.cust_name.set("Ada")
+            app.generate_pdf()
+        finally:
+            root.destroy()
+
+        self.assertIn("data", captured, "generation was not reached")
+        item = captured["data"]["items"][0]
+        self.assertEqual(item["bay"], "B-12")
+        self.assertEqual(item["qty"], 2, "numeric fields must arrive as numbers")
+        self.assertEqual(item["price"], 10.0)
+
+
+class CustomReceiptFields(unittest.TestCase):
+    """Receipt-level extras: a PO number, a salesperson, a deposit."""
+
+    def render_with(self, receipt_fields, **data):
+        fields = config.default_fields()
+        fields["receipt_fields"] = receipt_fields
+        payload = {"invoice_no": "I", "date": "d", "customer_name": "Ada",
+                   "items": [dict(ITEM)], "receipt_type": "Online", "shipping": 0}
+        payload.update(data)
+        return receipt_render.render_receipt(
+            payload, receipt_render.load_templates(), currency=MONEY, fields=fields)
+
+    def test_none_configured_renders_no_block(self):
+        self.assertNotIn('class="receipt-fields"', self.render_with([]))
+
+    def test_a_text_field_is_labelled_and_printed(self):
+        html = self.render_with(
+            [{"key": "po_number", "label": "PO Number", "type": "text", "enabled": True}],
+            po_number="PO-4471")
+        self.assertIn("PO Number", html)
+        self.assertIn("PO-4471", html)
+
+    def test_an_empty_field_leaves_no_stray_label(self):
+        """An unfilled optional field must not print a dangling heading."""
+        html = self.render_with(
+            [{"key": "po_number", "label": "PO Number", "type": "text", "enabled": True}],
+            po_number="")
+        self.assertNotIn("PO Number", html)
+
+    def test_an_amount_field_uses_the_currency(self):
+        html = self.render_with(
+            [{"key": "deposit", "label": "Deposit", "type": "amount", "enabled": True}],
+            deposit="250")
+        self.assertIn("$250.00", html)
+
+    def test_values_are_escaped(self):
+        html = self.render_with(
+            [{"key": "note", "label": "Note", "type": "text", "enabled": True}],
+            note="<b>&raw</b>")
+        self.assertIn("&lt;b&gt;&amp;raw&lt;/b&gt;", html)
+        self.assertNotIn("<b>&raw</b>", html)
+
+    def test_a_disabled_field_is_skipped(self):
+        html = self.render_with(
+            [{"key": "po_number", "label": "PO Number", "type": "text", "enabled": False}],
+            po_number="PO-4471")
+        self.assertNotIn("PO-4471", html)
+
+    def test_order_follows_the_configuration(self):
+        html = self.render_with([
+            {"key": "b_field", "label": "Second", "type": "text", "enabled": True},
+            {"key": "a_field", "label": "First", "type": "text", "enabled": True},
+        ], b_field="2", a_field="1")
+        self.assertLess(html.index("Second"), html.index("First"))
+
+
+class CrossListKeyCollisions(unittest.TestCase):
+    """Both lists share one render context, so a shared key would be ambiguous."""
+
+    def test_a_key_used_in_both_lists_is_refused(self):
+        fields = config.default_fields()
+        fields["receipt_fields"] = [
+            {"key": "sku", "label": "Order SKU", "type": "text", "enabled": True}]
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.validate_fields(fields, "fields.json")
+        self.assertIn("duplicate", ctx.exception.message)
+
+    def test_receipt_fields_are_validated_too(self):
+        fields = config.default_fields()
+        fields["receipt_fields"] = [
+            {"key": "po", "label": "PO", "type": "colour", "enabled": True}]
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.validate_fields(fields, "fields.json")
+        self.assertIn("receipt_fields[0]", ctx.exception.key)
+
+    def test_reserved_key_in_receipt_fields(self):
+        fields = config.default_fields()
+        fields["receipt_fields"] = [
+            {"key": "totals", "label": "X", "type": "text", "enabled": True}]
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.validate_fields(fields, "fields.json")
+        self.assertIn("reserved", ctx.exception.message)
+
+    def test_receipt_fields_must_be_a_list(self):
+        fields = config.default_fields()
+        fields["receipt_fields"] = {"po": "nope"}
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.validate_fields(fields, "fields.json")
+        self.assertEqual(ctx.exception.key, "receipt_fields")
+
+
+class StickyValues(unittest.TestCase):
+    """Remembered between items; state, not configuration."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self._app_dir = config.APP_DIR
+        self.dir = tempfile.mkdtemp(prefix="rm-sticky-")
+        self._cleanup = lambda: shutil.rmtree(self.dir, ignore_errors=True)
+        config.set_app_dir(self.dir)
+
+    def tearDown(self):
+        config.set_app_dir(self._app_dir)
+        self._cleanup()
+
+    def test_state_round_trips(self):
+        config.save_state({"sticky_line_item": {"serial": "SN-9"}})
+        self.assertEqual(config.load_state()["sticky_line_item"]["serial"], "SN-9")
+
+    def test_missing_state_is_empty_not_an_error(self):
+        self.assertEqual(config.load_state(), {})
+
+    def test_corrupt_state_is_ignored_rather_than_fatal(self):
+        """Losing remembered values must never stop a receipt being issued."""
+        with open(config.state_file(), "w", encoding="utf-8") as f:
+            f.write("{ not json")
+        self.assertEqual(config.load_state(), {})
+
+    def test_only_fields_still_marked_sticky_are_returned(self):
+        import tkinter as tk
+        import main
+
+        fields = config.default_fields()
+        for field in fields["line_item_fields"]:
+            if field["key"] == "serial":
+                field["sticky"] = True
+        config.save_state({"sticky_line_item": {"serial": "SN-9", "sku": "OLD"}})
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            app = main.ReceiptApp(root)
+            app.fields = fields
+            app.input_fields = main.ReceiptApp._entry_fields(app)
+            remembered = app.sticky_values()
+        finally:
+            root.destroy()
+
+        self.assertEqual(remembered, {"serial": "SN-9"},
+                         "un-marking a field must stop it pre-filling immediately")
+
+    def test_sticky_is_validated_as_a_flag(self):
+        fields = config.default_fields()
+        fields["line_item_fields"][0]["sticky"] = "yes"
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.validate_fields(fields, "fields.json")
+        self.assertIn("sticky", ctx.exception.key)
+
+
 class ItemDialogBuildsFromFields(unittest.TestCase):
     """The dialog has to survive a warranty config that is not the default."""
 

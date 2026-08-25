@@ -276,6 +276,10 @@ RESERVED_FIELD_KEYS = frozenset({
 #: behaviour where Discount and Tax appear only when a line actually uses them.
 DEFAULT_FIELDS = {
     SCHEMA_VERSION_KEY: 1,
+    # Extra receipt-level fields, printed under the Bill To box. Empty by
+    # default -- customer name, phone and email are built in. Add entries here
+    # for things like a PO number, a salesperson, or a vehicle registration.
+    "receipt_fields": [],
     "line_item_fields": [
         {"key": "sku", "label": "SKU", "type": "text", "enabled": True},
         {"key": "desc", "label": "Item Description", "type": "text",
@@ -895,7 +899,7 @@ def load_fields(path=None):
         raise ConfigError("expected a JSON object at the top level", path)
 
     fields = default_fields()
-    for key in ("line_item_fields",):
+    for key in ("line_item_fields", "receipt_fields"):
         if key in raw:
             fields[key] = raw[key]
     if isinstance(raw.get("warranty"), dict):
@@ -908,54 +912,21 @@ def validate_fields(fields, filename=None):
     """Raise ConfigError on a field definition that could not render. Returns fields."""
     filename = filename or fields_file()
 
+    receipt_fields = fields.get("receipt_fields", [])
+    if not isinstance(receipt_fields, list):
+        raise ConfigError("must be a list", filename, "receipt_fields")
+
     items = fields.get("line_item_fields")
     if not isinstance(items, list) or not items:
         raise ConfigError("must be a non-empty list", filename, "line_item_fields")
 
+    # Receipt-level and line-item keys share the render context, so a key used in
+    # both lists would be ambiguous. Checking them together catches that.
     seen = {}
+    for index, field in enumerate(receipt_fields):
+        _validate_field(field, f"receipt_fields[{index}]", seen, filename)
     for index, field in enumerate(items):
-        where = f"line_item_fields[{index}]"
-        if not isinstance(field, dict):
-            raise ConfigError("must be an object", filename, where)
-
-        key = str(field.get("key", "")).strip()
-        if not key:
-            raise ConfigError("must have a key", filename, f"{where}.key")
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
-            raise ConfigError(
-                f"must be letters, digits and underscores, starting with a letter "
-                f"(got {key!r}) -- the key becomes a template placeholder",
-                filename, f"{where}.key")
-        if key in seen:
-            raise ConfigError(
-                f"duplicate key {key!r} (already used by {seen[key]}) -- two "
-                f"columns cannot share one key",
-                filename, f"{where}.key")
-        if key in RESERVED_FIELD_KEYS:
-            raise ConfigError(
-                f"{key!r} is reserved by the renderer and would shadow one of its "
-                f"own values. Pick another key.",
-                filename, f"{where}.key")
-        seen[key] = where
-
-        field_type = field.get("type", "text")
-        if field_type not in FIELD_TYPES:
-            raise ConfigError(
-                f"must be one of {', '.join(FIELD_TYPES)} (got {field_type!r})",
-                filename, f"{where}.type")
-        if not str(field.get("label", "")).strip():
-            raise ConfigError(
-                "must have a label -- it is the column heading",
-                filename, f"{where}.label")
-        for flag in ("enabled", "required", "optional_column"):
-            if not isinstance(field.get(flag, False), bool):
-                raise ConfigError("must be true or false", filename, f"{where}.{flag}")
-        if field_type == "select":
-            options = field.get("options")
-            if not isinstance(options, list) or not options:
-                raise ConfigError(
-                    "a select field needs a non-empty list of options",
-                    filename, f"{where}.options")
+        _validate_field(field, f"line_item_fields[{index}]", seen, filename)
 
     # The arithmetic contract: the totals are derived from these, so they may be
     # hidden but never deleted or retyped into something that cannot be summed.
@@ -967,6 +938,56 @@ def validate_fields(fields, filename=None):
                 f"it, so it cannot be removed.",
                 filename, "line_item_fields")
 
+    _validate_warranty(fields, filename)
+    return fields
+
+
+def _validate_field(field, where, seen, filename):
+    """Validate one field definition, recording its key in `seen`."""
+    if not isinstance(field, dict):
+        raise ConfigError("must be an object", filename, where)
+
+    key = str(field.get("key", "")).strip()
+    if not key:
+        raise ConfigError("must have a key", filename, f"{where}.key")
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+        raise ConfigError(
+            f"must be letters, digits and underscores, starting with a letter "
+            f"(got {key!r}) -- the key becomes a template placeholder",
+            filename, f"{where}.key")
+    if key in seen:
+        raise ConfigError(
+            f"duplicate key {key!r} (already used by {seen[key]}) -- two fields "
+            f"cannot share one key, even across the two lists",
+            filename, f"{where}.key")
+    if key in RESERVED_FIELD_KEYS:
+        raise ConfigError(
+            f"{key!r} is reserved by the renderer and would shadow one of its "
+            f"own values. Pick another key.",
+            filename, f"{where}.key")
+    seen[key] = where
+
+    field_type = field.get("type", "text")
+    if field_type not in FIELD_TYPES:
+        raise ConfigError(
+            f"must be one of {', '.join(FIELD_TYPES)} (got {field_type!r})",
+            filename, f"{where}.type")
+    if not str(field.get("label", "")).strip():
+        raise ConfigError(
+            "must have a label -- it is what the receipt prints",
+            filename, f"{where}.label")
+    for flag in ("enabled", "required", "optional_column", "sticky"):
+        if not isinstance(field.get(flag, False), bool):
+            raise ConfigError("must be true or false", filename, f"{where}.{flag}")
+    if field_type == "select":
+        options = field.get("options")
+        if not isinstance(options, list) or not options:
+            raise ConfigError(
+                "a select field needs a non-empty list of options",
+                filename, f"{where}.options")
+
+
+def _validate_warranty(fields, filename):
     warranty = fields.get("warranty")
     if not isinstance(warranty, dict):
         raise ConfigError("must be an object", filename, "warranty")
@@ -985,7 +1006,6 @@ def validate_fields(fields, filename=None):
                 raise ConfigError(
                     f"may contain at most one '#' placeholder (got {option!r})",
                     filename, f"warranty.options[{index}]")
-    return fields
 
 
 def warranty_option_needs_number(option):
@@ -996,6 +1016,42 @@ def warranty_option_needs_number(option):
 def fill_warranty_number(option, number):
     """Substitute a chosen number into a '#' warranty option."""
     return str(option).replace("#", str(number), 1)
+
+
+STATE_FILE_NAME = "state.json"
+
+
+def state_file():
+    return os.path.join(APP_DIR, STATE_FILE_NAME)
+
+
+def load_state(path=None):
+    """Remembered machine state: last-used sticky values and the like.
+
+    This is *state*, not configuration. It is deliberately excluded from
+    migration, from `.bak` backups and from mtime-conflict checks: it changes on
+    every receipt, so treating it like config would churn backups constantly and
+    make genuine conflict detection on the real settings meaningless.
+
+    Never raises -- losing remembered values is a small inconvenience, and it
+    must never be a reason a receipt cannot be issued.
+    """
+    path = path or state_file()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def save_state(state, path=None):
+    """Persist machine state. Best-effort: failure is logged nowhere and ignored."""
+    path = path or state_file()
+    try:
+        atomic_write_json(path, state, keep_backup=False)
+    except OSError:
+        pass
 
 
 def strings_file():

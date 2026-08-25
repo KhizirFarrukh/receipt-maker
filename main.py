@@ -144,6 +144,10 @@ class ReceiptApp:
                             or str(currency.get("symbol", "")).strip())
         self.type_labels = config.receipt_type_labels(settings)
         self.fields = config.load_fields()
+        self.input_fields = self._entry_fields()
+        self.warranty_enabled = bool(
+            self.fields.get("warranty", {}).get("enabled", True)
+            and self.fields.get("warranty", {}).get("options"))
         root.title(f"{company['name']} - Receipt Generator")
         root.resizable(True, True)
         self._apply_scaling(root)
@@ -216,25 +220,24 @@ class ReceiptApp:
         tree_wrap.rowconfigure(0, weight=1)
         tree_wrap.columnconfigure(0, weight=1)
 
-        columns = ("sku", "desc", "serial", "qty", "price", "discount", "tax", "warranty")
-        self.items_tree = ttk.Treeview(tree_wrap, columns=columns, show="headings", height=6, selectmode="browse")
-        self.items_tree.heading("sku", text="SKU")
-        self.items_tree.heading("desc", text="Description")
-        self.items_tree.heading("serial", text="Serial Number")
-        self.items_tree.heading("qty", text="Qty")
-        self.items_tree.heading("price", text=self._money_field("Unit Price"))
-        self.items_tree.heading("discount", text=self._money_field("Discount"))
-        self.items_tree.heading("tax", text=self._money_field("Tax"))
-        self.items_tree.heading("warranty", text="Warranty")
-
-        self.items_tree.column("sku", width=70)
-        self.items_tree.column("desc", width=190)
-        self.items_tree.column("serial", width=110)
-        self.items_tree.column("qty", width=45, anchor=tk.CENTER)
-        self.items_tree.column("price", width=90, anchor=tk.E)
-        self.items_tree.column("discount", width=90, anchor=tk.E)
-        self.items_tree.column("tax", width=90, anchor=tk.E)
-        self.items_tree.column("warranty", width=150)
+        # Columns follow fields.json, plus warranty, so a custom field can be
+        # typed in as well as printed. self.input_fields is the single ordering
+        # everything else keys off -- tree, dialog and item collection.
+        columns = [f["key"] for f in self.input_fields]
+        if self.warranty_enabled:
+            columns.append("warranty")
+        self.items_tree = ttk.Treeview(tree_wrap, columns=columns, show="headings",
+                                       height=6, selectmode="browse")
+        for field in self.input_fields:
+            label = field.get("label", field["key"])
+            if field.get("type") in ("amount", "number"):
+                label = self._money_field(label) if field.get("type") == "amount" else label
+            self.items_tree.heading(field["key"], text=label)
+            self.items_tree.column(field["key"], **self._column_layout(field))
+        if self.warranty_enabled:
+            self.items_tree.heading(
+                "warranty", text=self.fields.get("warranty", {}).get("label", "Warranty"))
+            self.items_tree.column("warranty", width=150)
 
         vsb = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.items_tree.yview)
         hsb = ttk.Scrollbar(tree_wrap, orient="horizontal", command=self.items_tree.xview)
@@ -265,6 +268,72 @@ class ReceiptApp:
     def _money_field(self, label):
         """Label an amount field with the configured currency, e.g. 'Shipping (USD)'."""
         return f"{label} ({self.money_label})" if self.money_label else label
+
+    def _entry_fields(self):
+        """Line-item fields the user types in, in configured order.
+
+        Two rules that are easy to get backwards:
+
+        * `computed` fields are never entered -- `amount` is qty x price, so
+          offering it as an input would let the two disagree.
+        * `enabled` controls whether a column is *printed*, not whether it is
+          *entered*. Hiding the built-in Unit Price is a legitimate layout choice
+          (show only line totals), but the price still has to be typed in or the
+          totals have nothing to work from. So a hidden built-in stays on the
+          form, while a hidden custom field disappears from it entirely.
+        """
+        entry = []
+        for field in self.fields.get("line_item_fields", []):
+            if field.get("type") == "computed":
+                continue
+            if not field.get("enabled", True) and field["key"] not in config.BUILTIN_LINE_ITEM_KEYS:
+                continue
+            entry.append(field)
+        return entry
+
+    @staticmethod
+    def _build_field_widget(parent, field, row, initial=None):
+        """Create the input widget for one field and return its variable.
+
+        The widget follows the field's type, so a `select` is a dropdown that
+        cannot hold an invalid value and a `boolean` is a checkbox -- validation
+        the user cannot trip over is better than an error message.
+
+        ``initial`` (a remembered sticky value) wins over the field's `default`,
+        which is only a starting point for a field nothing is remembered for.
+        """
+        field_type = field.get("type", "text")
+        if field_type == "boolean":
+            var = tk.BooleanVar(value=bool(initial if initial is not None
+                                           else field.get("default")))
+            ttk.Checkbutton(parent, variable=var).grid(
+                row=row, column=1, padx=10, pady=5, sticky=tk.W)
+            return var
+
+        var = tk.StringVar(value=str(initial if initial is not None
+                                     else field.get("default", "") or ""))
+        if field_type == "select":
+            ttk.Combobox(parent, textvariable=var,
+                         values=[str(o) for o in field.get("options", [])],
+                         state="readonly", width=28).grid(
+                row=row, column=1, padx=10, pady=5, sticky=tk.W)
+        else:
+            ttk.Entry(parent, textvariable=var).grid(row=row, column=1, padx=10, pady=5)
+        return var
+
+    @staticmethod
+    def _column_layout(field):
+        """Tree column width and alignment for a field type."""
+        field_type = field.get("type", "text")
+        if field_type in ("amount", "number"):
+            return {"width": 90, "anchor": tk.E}
+        if field_type == "integer":
+            return {"width": 55, "anchor": tk.CENTER}
+        if field_type == "boolean":
+            return {"width": 60, "anchor": tk.CENTER}
+        if field_type in ("multiline", "text") and field.get("key") == "desc":
+            return {"width": 190}
+        return {"width": 110}
 
     # ------------------- scaling / window sizing -------------------
     @staticmethod
@@ -482,14 +551,22 @@ class ReceiptApp:
         dialog.resizable(False, False)
         dialog.transient(self.root)  # stay tied to and above the main window
 
-        labels = ["SKU", "Description", "Serial No.", "Quantity",
-                  self._money_field("Unit Price"), self._money_field("Discount"),
-                  self._money_field("Tax")]
-        vars_ = [tk.StringVar() for _ in labels]
-
-        for i, (label, var) in enumerate(zip(labels, vars_)):
-            ttk.Label(dialog, text=label).grid(row=i, column=0, padx=10, pady=5, sticky=tk.W)
-            ttk.Entry(dialog, textvariable=var).grid(row=i, column=1, padx=10, pady=5)
+        # One row per configured field, with a widget chosen by its type. This
+        # is what lets a custom column be typed in rather than only printed.
+        labels = self.input_fields
+        # Sticky values are only a starting point for a *new* item; when editing,
+        # the row's own values are filled in below and must not be pre-empted.
+        remembered = {} if editing else self.sticky_values()
+        vars_ = {}
+        for row, field in enumerate(labels):
+            label = field.get("label", field["key"])
+            if field.get("type") == "amount":
+                label = self._money_field(label)
+            if field.get("required"):
+                label += " *"
+            ttk.Label(dialog, text=label).grid(row=row, column=0, padx=10, pady=5, sticky=tk.W)
+            vars_[field["key"]] = self._build_field_widget(
+                dialog, field, row, remembered.get(field["key"]))
 
         # Warranty options come from fields.json. An option containing "#"
         # prompts for a whole number, so one entry covers 12 Months, 24 Months
@@ -533,11 +610,16 @@ class ReceiptApp:
 
         # pre-fill the fields when editing an existing row
         if editing:
-            current = self.items_tree.item(item_id)["values"]
-            sku0, desc0, serial0, qty0, price0, discount0, tax0, warranty0 = current
-            for var, value in zip(vars_, (sku0, desc0, serial0, qty0, price0, discount0, tax0)):
-                var.set("" if value is None else str(value))
-            option, number = self.match_warranty_option(str(warranty0), warranty_options)
+            existing = self.row_to_item(self.items_tree.item(item_id)["values"])
+            for field in labels:
+                value = existing.get(field["key"], "")
+                var = vars_[field["key"]]
+                if isinstance(var, tk.BooleanVar):
+                    var.set(str(value).strip().lower() in ("1", "true", "yes"))
+                else:
+                    var.set("" if value is None else str(value))
+            option, number = self.match_warranty_option(
+                str(existing.get("warranty", "")), warranty_options)
             if option:
                 warranty_type.set(option)
             if number:
@@ -545,38 +627,23 @@ class ReceiptApp:
         on_warranty_type_change()
 
         def save():
-            sku = vars_[0].get().strip()
-            desc = vars_[1].get().strip()
-            serial = vars_[2].get().strip()
-            qty = vars_[3].get().strip()
-            price = vars_[4].get().strip()
-            discount = vars_[5].get().strip()
-            tax = vars_[6].get().strip()
-
-            if not desc:
-                messagebox.showerror("Error", "Description is required.", parent=dialog)
-                return
-            try:
-                qty_int = int(qty) if qty else 1
-                price_float = float(price) if price else 0.0
-                discount_float = float(discount) if discount else 0.0
-                tax_float = float(tax) if tax else 0.0
-            except ValueError:
-                messagebox.showerror("Error", "Qty, Price, Discount, and Tax must be numbers.", parent=dialog)
-                return
-            if discount_float < 0 or tax_float < 0:
-                messagebox.showerror("Error", "Discount and Tax cannot be negative.", parent=dialog)
-                return
+            values = {}
+            for field in labels:
+                raw = vars_[field["key"]].get()
+                value, error = self.clean_field_value(field, raw)
+                if error:
+                    messagebox.showerror("Error", error, parent=dialog)
+                    return
+                values[field["key"]] = value
 
             warranty = self.resolve_warranty(
                 warranty_type.get(), warranty_number.get().strip(), dialog)
             if warranty is None:
                 return
+            values["warranty"] = warranty
 
-            row_values = (
-                sku, desc, serial, qty_int,
-                f"{price_float:.2f}", f"{discount_float:.2f}", f"{tax_float:.2f}", warranty,
-            )
+            self.remember_sticky(values)
+            row_values = self.item_to_row(values)
             if editing:
                 self.items_tree.item(item_id, values=row_values)
             else:
@@ -598,6 +665,98 @@ class ReceiptApp:
         dialog.grab_set()
         dialog.focus_set()
         self.root.wait_window(dialog)
+
+    def sticky_values(self):
+        """Values remembered from the last item, for fields marked `sticky`.
+
+        Only fields still marked sticky are returned, so un-marking one stops it
+        pre-filling immediately rather than the stale value lingering.
+        """
+        remembered = config.load_state().get("sticky_line_item", {})
+        if not isinstance(remembered, dict):
+            return {}
+        return {f["key"]: remembered[f["key"]] for f in self.input_fields
+                if f.get("sticky") and f["key"] in remembered}
+
+    def remember_sticky(self, values):
+        """Persist the sticky fields of the item just saved."""
+        sticky = {f["key"]: values.get(f["key"], "") for f in self.input_fields
+                  if f.get("sticky")}
+        if not sticky:
+            return
+        state = config.load_state()
+        state["sticky_line_item"] = sticky
+        config.save_state(state)
+
+    def row_to_item(self, values):
+        """Tree row (a positional tuple) -> a dict keyed by field key.
+
+        The tree stores values positionally, so every read of a row has to go
+        through the same column ordering that wrote it. Doing this in one place
+        is what stops a reordered fields.json from silently shifting data into
+        the wrong column.
+        """
+        keys = [f["key"] for f in self.input_fields]
+        if self.warranty_enabled:
+            keys.append("warranty")
+        item = {}
+        for key, value in zip(keys, list(values)):
+            item[key] = "" if value is None else value
+        return item
+
+    def item_to_row(self, item):
+        """The inverse of row_to_item: a dict -> the tree's positional tuple."""
+        keys = [f["key"] for f in self.input_fields]
+        if self.warranty_enabled:
+            keys.append("warranty")
+        return tuple(item.get(key, "") for key in keys)
+
+    def clean_field_value(self, field, raw):
+        """Validate and normalise one entered value. Returns (value, error).
+
+        `error` is a message to show; when it is set the dialog stays open. The
+        checks follow the field's declared type, so a custom `amount` column is
+        validated exactly like the built-in ones rather than being trusted.
+        """
+        label = field.get("label", field["key"])
+        field_type = field.get("type", "text")
+
+        if isinstance(raw, bool):
+            return ("true" if raw else ""), None
+
+        text = str(raw).strip()
+        if not text:
+            if field.get("required"):
+                return None, f"{label} is required."
+            # An absent value stays absent -- the renderer decides how to show a
+            # blank cell. Only the arithmetic triple needs a usable fallback.
+            if field["key"] == "qty":
+                return 1, None
+            if field_type in ("amount", "number", "integer"):
+                return 0, None
+            return "", None
+
+        if field_type == "integer":
+            try:
+                return int(text), None
+            except ValueError:
+                return None, f"{label} must be a whole number."
+
+        if field_type in ("amount", "number"):
+            try:
+                number = float(text)
+            except ValueError:
+                return None, f"{label} must be a number."
+            if field_type == "amount" and number < 0:
+                return None, f"{label} cannot be negative."
+            return f"{number:.2f}", None
+
+        if field_type == "select":
+            options = [str(o) for o in field.get("options", [])]
+            if options and text not in options:
+                return None, f"{label} must be one of: {', '.join(options)}."
+
+        return text, None
 
     @staticmethod
     def resolve_warranty(option, number_raw, parent=None):
@@ -711,26 +870,25 @@ class ReceiptApp:
 
         items = []
         for child in self.items_tree.get_children():
-            vals = self.items_tree.item(child)["values"]
-            sku, desc, serial, qty, price, discount, tax, warranty = vals
-            try:
-                qty_int = int(qty)
-                price_float = float(price)
-                discount_float = float(discount)
-                tax_float = float(tax)
-            except (ValueError, TypeError):
-                messagebox.showerror("Error", f"Invalid numbers in item: {desc}")
-                return
-            items.append({
-                "sku": sku,
-                "desc": desc,
-                "serial": serial,
-                "qty": qty_int,
-                "price": price_float,
-                "discount": discount_float,
-                "tax": tax_float,
-                "warranty": warranty
-            })
+            item = self.row_to_item(self.items_tree.item(child)["values"])
+            # Numeric fields are stored as text in the tree; convert them back so
+            # the renderer receives numbers, and say which item is wrong if one
+            # cannot be read rather than failing anonymously.
+            for field in self.input_fields:
+                field_type = field.get("type", "text")
+                if field_type not in ("integer", "amount", "number"):
+                    continue
+                raw = item.get(field["key"], "")
+                try:
+                    item[field["key"]] = (int(raw) if field_type == "integer"
+                                          else float(raw or 0))
+                except (ValueError, TypeError):
+                    messagebox.showerror(
+                        "Error",
+                        f"{field.get('label', field['key'])} is not a number "
+                        f"on item: {item.get('desc', '') or '(no description)'}")
+                    return
+            items.append(item)
 
         if not items:
             messagebox.showerror("Error", "At least one item is required.")

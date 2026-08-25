@@ -394,7 +394,9 @@ BLOCK_CONTEXTS = {
                   "items_table", "totals", "terms"},
     "styles.css": set(),
     "receipt_info.html": {"type_badge", "invoice_no", "date", "customer_name",
-                          "customer_phone", "customer_email"},
+                          "customer_phone", "customer_email",
+                          "custom_receipt_fields"},
+    "field_row.html": {"label", "value"},
     "items_table.html": {"header_cells", "rows"},
     "item_header_cell.html": {"label", "css_class"},
     "item_row_cell.html": {"value", "css_class", "note"},
@@ -573,6 +575,17 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
         "customer_name": data.get("customer_name", ""),
         "customer_phone": data.get("customer_phone", ""),
         "customer_email": data.get("customer_email", ""),
+        # Configured extras (a PO number, a salesperson, a registration). Each
+        # row hides itself when empty, so an unfilled field leaves no stray
+        # label behind.
+        "custom_receipt_fields": "".join(
+            _block(templates, "field_row.html", {
+                "label": field.get("label", field["key"]),
+                "value": _receipt_field_value(data, field, currency, strings),
+            })
+            for field in fields.get("receipt_fields", [])
+            if field.get("enabled", True)
+        ),
     })
     items_table = _block(templates, "items_table.html", {
         "header_cells": header_cells,
@@ -706,6 +719,20 @@ def build_font_faces(fonts):
     stack = f"'{family}'" + (f", {fallback}" if fallback else "")
     faces.append(f"    body {{\n        font-family: {stack};\n    }}")
     return "\n" + "\n".join(faces)
+
+
+def _receipt_field_value(data, field, currency, strings):
+    """Format one receipt-level custom field for display."""
+    raw = data.get(field["key"], "")
+    style = TYPE_PRESENTATION.get(field.get("type", "text"), ("", "plain"))[1]
+    if raw in ("", None):
+        return ""
+    if style == "money":
+        return format_amount(raw, currency)
+    if style == "boolean":
+        yes_no = (strings or {}).get("boolean", {})
+        return yes_no.get("yes", "Yes") if raw else yes_no.get("no", "No")
+    return str(raw)
 
 
 def _css_class(field):
