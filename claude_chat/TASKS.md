@@ -1,3 +1,7 @@
+> **Looking for what is still to do?** That lives in [`../TODO.md`](../TODO.md) — the durable
+> backlog. This file is the working checklist for work already in progress, kept mainly for the
+> reasoning behind decisions that have been made.
+
 # Working checklist — build/run verification + Stage 2
 
 Created 2026-08-22. Companion to [HANDOFF.md](HANDOFF.md) and
@@ -317,16 +321,16 @@ every sidecar.
       options. This is the highest-value editor now that Stage 5 made fields configurable.
 - [x] A file picker for `logo_path` (closes H1 properly).
 
-### H6. Certificate / signature inside the app
+### H6. Certificate / signature inside the app — **DONE for keys** (image signature outstanding)
 
-- [ ] **Tools → Signing Keys**: create a key pair, import an existing one, show status and expiry.
+- [x] **Tools → Signing Keys**: create a key pair, import an existing one, show status and expiry.
       This *is* Stage 6, which was next anyway — the user's request confirms its priority.
       Import must cover the format matrix the plan lists (PKCS#8, PKCS#1, DER, encrypted PEM,
       PKCS#12/`.pfx`), each unsupported case getting a specific message rather than a traceback.
 - [ ] Image signature (`signature_image`) with a file picker. **Keep the README honest that an
       image signature is decorative, not cryptographic** — it must not be presented as equivalent
       to the PAdES signature.
-- [ ] Never write the passphrase to disk.
+- [x] Never write the passphrase to disk — it is used once, in memory, and the key is re-saved unencrypted (documented in the README).
 
 ### H7. Umbrella: no file editing required
 

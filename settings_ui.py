@@ -517,3 +517,213 @@ def _clean_field(record):
 def open_fields(parent, on_saved=None):
     dialog = FieldsDialog(parent, on_saved)
     parent.wait_window(dialog.win)
+
+
+# ---------------------------------------------------------------- signing keys
+class SigningKeysDialog:
+    """Tools → Signing Keys. Create or import the key that signs receipts.
+
+    The private key never leaves this machine and a passphrase is never stored:
+    an imported encrypted key is decrypted once, here, and re-saved into the
+    app's own folder. Keeping the passphrase beside the key it unlocks would
+    protect nobody, and prompting for it on every receipt is not workable at a
+    till -- so the honest thing is to say what happens and let the file
+    permissions do the work.
+    """
+
+    def __init__(self, parent, on_changed=None):
+        self.parent = parent
+        self.on_changed = on_changed
+
+        import receipt_service
+        self.key_path, self.cert_path = receipt_service.signing_key_paths()
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("Signing Keys")
+        self.win.transient(parent)
+
+        frame = ttk.Frame(self.win, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        self.status = ttk.Label(frame, justify=tk.LEFT, wraplength=520)
+        self.status.pack(anchor=tk.W)
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor=tk.W, pady=(14, 0))
+        ttk.Button(buttons, text="Create new key…", command=self.create).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Import existing key…",
+                   command=self.import_key).pack(side=tk.LEFT, padx=6)
+        ttk.Button(buttons, text="Close", command=self.win.destroy).pack(side=tk.LEFT)
+
+        ttk.Label(
+            frame, wraplength=520, justify=tk.LEFT, foreground="#64748b",
+            text="The certificate is self-signed, so Adobe Reader shows “valid signature, "
+                 "untrusted certificate” — that is expected and not a fault. Publish the "
+                 "certificate file so customers can check a receipt against it.\n\n"
+                 "Changing the key does not invalidate receipts already issued: the old "
+                 "certificate is remembered and they keep verifying.",
+        ).pack(anchor=tk.W, pady=(14, 0))
+
+        self.refresh()
+        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+
+    def refresh(self):
+        import receipt_signing
+
+        if not os.path.isfile(self.key_path):
+            self.status.config(
+                text="No signing key yet.\n\n"
+                     "Receipts cannot be signed until one exists. Create one, or import "
+                     "a key you already have.",
+                foreground="#b45309")
+            return
+
+        info = receipt_signing.certificate_info(self.cert_path)
+        if info is None:
+            self.status.config(
+                text=f"A private key is present at\n  {self.key_path}\n\n"
+                     f"but its certificate could not be read:\n  {self.cert_path}",
+                foreground="#b91c1c")
+            return
+
+        previous = max(0, len(receipt_signing.known_certificate_paths(self.cert_path)) - 1)
+        expiry = info["not_after"].strftime("%d %b %Y")
+        if info["expired"]:
+            note, colour = f"EXPIRED on {expiry}.", "#b91c1c"
+        elif info["days_left"] < 60:
+            note, colour = f"Expires {expiry} — {info['days_left']} days left.", "#b45309"
+        else:
+            note, colour = f"Valid until {expiry}.", "#166534"
+
+        lines = [f"Signing as: {info['subject']}", note,
+                 f"Key:         {self.key_path}",
+                 f"Certificate: {self.cert_path}"]
+        if previous:
+            lines.append(f"{previous} previous certificate(s) remembered, so older "
+                         f"receipts still verify.")
+        self.status.config(text="\n".join(lines), foreground=colour)
+
+    # -- actions ---------------------------------------------------------
+    def _confirm_replace(self):
+        if not os.path.isfile(self.key_path):
+            return True
+        return messagebox.askyesno(
+            "Replace the signing key?",
+            "A signing key already exists.\n\n"
+            "Receipts you issue from now on will be signed with the new key. "
+            "Receipts already issued keep verifying, because the current "
+            "certificate is remembered first.\n\nReplace it?",
+            parent=self.win)
+
+    def create(self):
+        import receipt_signing
+
+        if not self._confirm_replace():
+            return
+        settings = config.load_app_settings()
+        org = (settings["signing"].get("signer_name")
+               or settings["company"].get("name") or "").strip()
+        try:
+            receipt_signing.remember_current_certificate(self.cert_path)
+            receipt_signing.generate_key_pair(
+                self.key_path, self.cert_path, force=True,
+                common_name=f"{org} Receipt Signing" if org else None, org_name=org)
+        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+            messagebox.showerror("Could not create the key", str(exc), parent=self.win)
+            return
+        messagebox.showinfo(
+            "Signing key created",
+            f"Created for: {org or '(no name set)'}\n\n"
+            f"Keep {os.path.basename(self.key_path)} private and back it up. "
+            f"Publish {os.path.basename(self.cert_path)} so receipts can be checked.",
+            parent=self.win)
+        self._changed()
+
+    def import_key(self):
+        import receipt_signing
+
+        source = filedialog.askopenfilename(
+            title="Select the private key or PKCS#12 file", parent=self.win,
+            filetypes=[("Keys and bundles", "*.pem *.key *.der *.p12 *.pfx"),
+                       ("All files", "*.*")])
+        if not source:
+            return
+        if not self._confirm_replace():
+            return
+
+        passphrase = None
+        settings = config.load_app_settings()
+        org = (settings["signing"].get("signer_name")
+               or settings["company"].get("name") or "").strip()
+
+        # Try without a passphrase first, and only ask if the file needs one --
+        # most keys do not, and prompting regardless trains people to type
+        # secrets into boxes that did not need them.
+        for attempt in range(2):
+            try:
+                receipt_signing.import_key_pair(
+                    source, self.key_path, self.cert_path, passphrase=passphrase,
+                    org_name=org, common_name=f"{org} Receipt Signing" if org else None,
+                    force=True)
+                break
+            except receipt_signing.KeyImportError as exc:
+                needs_secret = "passphrase" in str(exc).lower()
+                if needs_secret and attempt == 0:
+                    passphrase = _ask_passphrase(self.win)
+                    if passphrase is None:
+                        return
+                    continue
+                messagebox.showerror("Could not import that key", str(exc), parent=self.win)
+                return
+            except Exception as exc:  # noqa: BLE001
+                messagebox.showerror("Could not import that key", str(exc), parent=self.win)
+                return
+
+        messagebox.showinfo(
+            "Key imported",
+            "The key was imported and saved unencrypted in the app's signing "
+            "folder — the passphrase you typed is not stored anywhere.\n\n"
+            "Keep that folder private and back it up.",
+            parent=self.win)
+        self._changed()
+
+    def _changed(self):
+        self.refresh()
+        if self.on_changed:
+            self.on_changed()
+
+
+def _ask_passphrase(parent):
+    """Prompt for a passphrase. Returns None if cancelled. Never persisted."""
+    dialog = tk.Toplevel(parent)
+    dialog.title("Passphrase")
+    frame = ttk.Frame(dialog, padding=16)
+    frame.pack(fill=tk.BOTH, expand=True)
+    ttk.Label(frame, text="This key is encrypted. Enter its passphrase:").pack(anchor=tk.W)
+    value = tk.StringVar()
+    entry = ttk.Entry(frame, textvariable=value, show="•", width=34)
+    entry.pack(anchor=tk.W, pady=(8, 0))
+    entry.focus_set()
+    ttk.Label(frame, text="It is used once, to read the key, and is not saved.",
+              foreground="#64748b").pack(anchor=tk.W, pady=(6, 0))
+
+    result = {"value": None}
+
+    def ok():
+        result["value"] = value.get()
+        dialog.destroy()
+
+    buttons = ttk.Frame(frame)
+    buttons.pack(pady=(14, 0))
+    ttk.Button(buttons, text="OK", command=ok).pack(side=tk.LEFT, padx=4)
+    ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+    entry.bind("<Return>", lambda e: ok())
+    dialog.transient(parent)
+    dialog.grab_set()
+    parent.wait_window(dialog)
+    return result["value"]
+
+
+def open_signing_keys(parent, on_changed=None):
+    dialog = SigningKeysDialog(parent, on_changed)
+    parent.wait_window(dialog.win)

@@ -29,6 +29,11 @@ from config import (
     load_app_settings,
 )
 
+#: Character width shared by every input in the item dialog. Entries and
+#: comboboxes measure it slightly differently, but combined with sticky=EW and a
+#: weighted column they end up flush on both edges.
+INPUT_WIDTH = 24
+
 # ------------------- logging -------------------
 LOG_DIR = os.path.join(APP_DIR, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "receipt-maker.log")
@@ -350,10 +355,11 @@ class ReceiptApp:
         if field_type == "select":
             ttk.Combobox(parent, textvariable=var,
                          values=[str(o) for o in field.get("options", [])],
-                         state="readonly", width=28).grid(
-                row=row, column=1, padx=10, pady=5, sticky=tk.W)
+                         state="readonly", width=INPUT_WIDTH).grid(
+                row=row, column=1, padx=10, pady=5, sticky=tk.EW)
         else:
-            ttk.Entry(parent, textvariable=var).grid(row=row, column=1, padx=10, pady=5)
+            ttk.Entry(parent, textvariable=var, width=INPUT_WIDTH).grid(
+                row=row, column=1, padx=10, pady=5, sticky=tk.EW)
         return var
 
     @staticmethod
@@ -582,9 +588,11 @@ class ReceiptApp:
         editing = item_id is not None
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Item" if editing else "New Item")
-        dialog.geometry("400x430")
+        # No fixed size: the rows come from fields.json, so a hardcoded height
+        # clips as soon as anyone adds a column. Let it size to its contents.
         dialog.resizable(False, False)
         dialog.transient(self.root)  # stay tied to and above the main window
+        dialog.columnconfigure(1, weight=1)
 
         # One row per configured field, with a widget chosen by its type. This
         # is what lets a custom column be typed in rather than only printed.
@@ -616,20 +624,23 @@ class ReceiptApp:
         if warranty_cfg.get("enabled", True) and warranty_options:
             ttk.Label(dialog, text=warranty_cfg.get("label", "Warranty")).grid(
                 row=warranty_row, column=0, padx=10, pady=5, sticky=tk.W)
+            # Same width and sticky as every other input, so the right-hand edge
+            # lines up instead of the dropdown running into the window border.
             warranty_combo = ttk.Combobox(
                 dialog,
                 textvariable=warranty_type,
                 values=warranty_options,
                 state="readonly",
-                width=28,
+                width=INPUT_WIDTH,
             )
-            warranty_combo.grid(row=warranty_row, column=1, padx=10, pady=5, sticky=tk.W)
+            warranty_combo.grid(row=warranty_row, column=1, padx=10, pady=5, sticky=tk.EW)
 
             number_row = warranty_row + 1
-            ttk.Label(dialog, text="Warranty Number").grid(
+            ttk.Label(dialog, text="Warranty Period").grid(
                 row=number_row, column=0, padx=10, pady=5, sticky=tk.W)
-            number_entry = ttk.Entry(dialog, textvariable=warranty_number, width=10)
-            number_entry.grid(row=number_row, column=1, padx=10, pady=5, sticky=tk.W)
+            number_entry = ttk.Entry(dialog, textvariable=warranty_number,
+                                     width=INPUT_WIDTH)
+            number_entry.grid(row=number_row, column=1, padx=10, pady=5, sticky=tk.EW)
             months_row = number_row
         else:
             months_row = warranty_row - 1        # nothing shown; keep the layout tight
@@ -1104,6 +1115,7 @@ class ReceiptApp:
         tools = tk.Menu(menubar, tearoff=0)
         tools.add_command(label="Settings...", command=self.open_settings_dialog)
         tools.add_command(label="Fields && Columns...", command=self.open_fields_dialog)
+        tools.add_command(label="Signing Keys...", command=self.open_signing_keys_dialog)
         tools.add_separator()
         tools.add_command(label="Verify Receipt...", command=self.verify_receipt_dialog)
         tools.add_command(label="Sign Existing PDF(s)...", command=self.sign_existing_pdfs_dialog)
@@ -1115,6 +1127,14 @@ class ReceiptApp:
         import settings_ui
 
         settings_ui.open_settings(self.root, on_saved=self._settings_saved)
+
+    def open_signing_keys_dialog(self):
+        """Create or import the key that signs receipts, without a command line."""
+        import settings_ui
+
+        settings_ui.open_signing_keys(
+            self.root,
+            on_changed=lambda: self.status_label.config(text="Signing key updated"))
 
     def open_fields_dialog(self):
         """Edit the item columns, receipt fields and warranty options."""

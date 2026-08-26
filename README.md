@@ -70,7 +70,25 @@ tell a genuine receipt from a fake one.
 
 ### One-time setup: create your signing key
 
-Run this **once** to create your key pair:
+**In the app:** *Tools → Signing Keys…* → **Create new key**. It uses the business name from your
+settings, shows you where the files went, and tells you when the certificate expires.
+
+That dialog also **imports a key you already have** — PEM or DER, PKCS#8 or PKCS#1, encrypted or
+not, or a PKCS#12 `.pfx`/`.p12` bundle. If the key is encrypted you are asked for its passphrase
+once, to read it; **the passphrase is never stored**. The key is saved unencrypted in the app's
+`signing/` folder, so keep that folder private. (Storing a passphrase next to the key it unlocks
+protects nobody, and asking for it on every receipt is not workable at a till — so the app does
+neither and says so.)
+
+If the file cannot be used you get a specific reason: wrong passphrase, a certificate picked
+instead of a key, a public key, a certificate that does not match the key, or an RSA key under
+2048 bits.
+
+**Changing your key does not invalidate receipts you have already issued.** The old certificate is
+remembered, so those receipts keep verifying — and verification says when one was signed with a
+previous key, so you can still tell them apart.
+
+**From a terminal**, equivalently:
 
 ```bash
 python keygen.py
@@ -199,6 +217,7 @@ Everything below can be edited **inside the app** — you do not need to open a 
 |---|---|
 | **Tools → Settings…** | Business details and logo, currency, tax, dates, page margins, invoice numbering, signing, interface preferences (`appsettings.json`) |
 | **Tools → Fields & Columns…** | The item table's columns, extra receipt fields, and the warranty options (`fields.json`) |
+| **Tools → Signing Keys…** | Create or import the key that signs receipts, and see when its certificate expires |
 
 Saving validates first, so a value the app would refuse to load is refused *before* anything is
 written, with a message naming the exact setting. Every save keeps a timestamped `.bak`, and if the
