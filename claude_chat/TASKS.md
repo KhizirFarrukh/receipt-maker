@@ -306,16 +306,16 @@ every sidecar.
       instinct was `state.json`, since it is a per-machine preference rather than receipt
       configuration — but it is their config file and a visible, editable setting is defensible.)
 
-### H5. Edit settings inside the app
+### H5. Edit settings inside the app — **DONE** (Tools → Settings, Tools → Fields & Columns)
 
-- [ ] **Tools → Settings**: company details, currency, tax, date format, receipt types, invoice
+- [x] **Tools → Settings**: company details, currency, tax, date format, receipt types, invoice
       numbering, terms page, fonts — everything in `appsettings.json`. Saves through the existing
       `validate()` + atomic-write + `.bak` path, so a bad value is refused with the same message
       as a hand edit. Honour the mtime-conflict check: if the file changed on disk, offer reload
       rather than clobbering.
-- [ ] **Tools → Fields**: add, rename, reorder, hide line-item and receipt fields; edit warranty
+- [x] **Tools → Fields**: add, rename, reorder, hide line-item and receipt fields; edit warranty
       options. This is the highest-value editor now that Stage 5 made fields configurable.
-- [ ] A file picker for `logo_path` (closes H1 properly).
+- [x] A file picker for `logo_path` (closes H1 properly).
 
 ### H6. Certificate / signature inside the app
 

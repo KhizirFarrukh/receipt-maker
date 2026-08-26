@@ -13,7 +13,11 @@ playwright_datas, playwright_binaries, playwright_hiddenimports = collect_all("p
 # not discover on its own. collect_all grabs each package wholesale.
 signing_datas = []
 signing_binaries = []
-signing_hiddenimports = ["receipt_signing"]
+# settings_ui is imported lazily inside a menu handler and invoice_counter only
+# through receipt_service, so name them explicitly rather than trusting the
+# static analysis. A module missed here breaks only the packaged build, which is
+# the hardest place to notice it.
+signing_hiddenimports = ["receipt_signing", "settings_ui", "invoice_counter"]
 for _pkg in ("pyhanko", "pyhanko_certvalidator", "asn1crypto", "oscrypto",
              "cryptography", "certifi", "tzlocal", "uritools"):
     _d, _b, _h = collect_all(_pkg)

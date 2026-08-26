@@ -191,6 +191,26 @@ rather than being replaced by the defaults.
 
 The build does **not** include your signing key — the `signing/` folder is created beside the executable when you run `keygen.py`. Keep it on your own machine and do not copy it into any `dist/` folder you share, so your private key is never distributed.
 
+## Settings
+
+Everything below can be edited **inside the app** — you do not need to open a text editor:
+
+| Menu | What it edits |
+|---|---|
+| **Tools → Settings…** | Business details and logo, currency, tax, dates, page margins, invoice numbering, signing, interface preferences (`appsettings.json`) |
+| **Tools → Fields & Columns…** | The item table's columns, extra receipt fields, and the warranty options (`fields.json`) |
+
+Saving validates first, so a value the app would refuse to load is refused *before* anything is
+written, with a message naming the exact setting. Every save keeps a timestamped `.bak`, and if the
+file was edited outside the app while the window was open you are asked rather than having your
+change silently overwritten.
+
+Hand-editing the JSON still works exactly as before — the dialogs are a front end onto the same
+files. The sections below document the files themselves.
+
+A few changes (currency labels on the form, the receipt-type dropdown, which item columns exist)
+are applied when the app next starts, because they determine how the main window is laid out.
+
 ## Business Settings
 
 Edit `appsettings.json` to change the business details shown in the receipt header and footer.

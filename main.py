@@ -1102,10 +1102,39 @@ class ReceiptApp:
     def _build_menu(self, root):
         menubar = tk.Menu(root)
         tools = tk.Menu(menubar, tearoff=0)
+        tools.add_command(label="Settings...", command=self.open_settings_dialog)
+        tools.add_command(label="Fields && Columns...", command=self.open_fields_dialog)
+        tools.add_separator()
         tools.add_command(label="Verify Receipt...", command=self.verify_receipt_dialog)
         tools.add_command(label="Sign Existing PDF(s)...", command=self.sign_existing_pdfs_dialog)
         menubar.add_cascade(label="Tools", menu=tools)
         root.config(menu=menubar)
+
+    def open_settings_dialog(self):
+        """Edit appsettings.json in the app rather than in a text editor."""
+        import settings_ui
+
+        settings_ui.open_settings(self.root, on_saved=self._settings_saved)
+
+    def open_fields_dialog(self):
+        """Edit the item columns, receipt fields and warranty options."""
+        import settings_ui
+
+        settings_ui.open_fields(self.root, on_saved=self._settings_saved)
+
+    def _settings_saved(self):
+        """Apply what can be applied live, and say what needs a restart.
+
+        Currency labels, the receipt-type list and the item columns are all built
+        during __init__, so changing them re-lays-out the whole window. Rather
+        than rebuild it underneath the user -- and risk losing a part-typed
+        receipt -- take the safe subset now and be explicit about the rest.
+        """
+        receipt_render.clear_template_cache()
+        self.refresh_invoice_number()
+        self.status_label.config(
+            text="Settings saved. Some changes (currency labels, receipt types, "
+                 "item columns) apply next time the app starts.")
 
     def verify_receipt_dialog(self):
         """Pick a PDF and report one of: Verified / Invalid / Not found."""
@@ -1202,6 +1231,13 @@ def run_smoke_test():
     console attached, report nothing. Failures go to the log and the exit code.
     """
     try:
+        # Import what the menus import lazily. A module that PyInstaller failed
+        # to bundle would otherwise only surface when a user clicks the menu in
+        # the packaged app -- the hardest place to notice it, and long after the
+        # build reported success.
+        import settings_ui  # noqa: F401
+        import invoice_counter  # noqa: F401
+
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")
         html_content = receipt_render.build_html(

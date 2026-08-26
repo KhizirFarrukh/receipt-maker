@@ -813,7 +813,15 @@ def _normalize_strings(settings):
     return settings
 
 
-def update_app_settings(changes, path=None, expect_unchanged=True):
+def file_mtime(path):
+    """Modification time, or None if the file is not there."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def update_app_settings(changes, path=None, known_mtime=None):
     """Apply nested `changes` to appsettings.json and save. Returns the result.
 
     Read, merge, validate, write -- in that order, and always through
@@ -821,12 +829,14 @@ def update_app_settings(changes, path=None, expect_unchanged=True):
     written. Validation runs *before* the write, so the app can never save a
     config it would then refuse to load.
 
-    ``expect_unchanged`` passes the mtime the read saw, turning a concurrent
-    hand-edit into a ConfigConflict instead of silently discarding it. Callers
-    that mean to overwrite pass False.
+    ``known_mtime`` is the mtime the caller saw **when it read the file**, which
+    for a dialog is when it opened, not when Save was pressed. Passing it turns a
+    hand edit made in the meantime into a ConfigConflict instead of silently
+    discarding it. Omitting it skips the check, which is only correct for a
+    read-modify-write that happens in one go.
     """
     path = path or APP_SETTINGS_FILE
-    mtime = os.path.getmtime(path) if os.path.exists(path) else None
+    mtime = known_mtime
 
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -839,8 +849,7 @@ def update_app_settings(changes, path=None, expect_unchanged=True):
     merged = deep_merge(deep_merge(DEFAULT_APP_SETTINGS, current), changes)
     merged[SCHEMA_VERSION_KEY] = SCHEMA_VERSION
     validate(merged, path)
-    atomic_write_json(path, merged,
-                      expected_mtime=mtime if expect_unchanged else None)
+    atomic_write_json(path, merged, expected_mtime=mtime)
     return merged
 
 
@@ -1051,6 +1060,21 @@ def _validate_warranty(fields, filename):
                 raise ConfigError(
                     f"may contain at most one '#' placeholder (got {option!r})",
                     filename, f"warranty.options[{index}]")
+
+
+def save_fields(fields, path=None, known_mtime=None):
+    """Validate and save fields.json. Returns the saved definition.
+
+    Same contract as update_app_settings: validate before writing, keep a
+    ``.bak``, and treat ``known_mtime`` as the mtime the caller read at, so a
+    concurrent hand edit is detected rather than discarded. The lists are
+    replaced whole, not merged -- their order is the column order, and merging
+    would make removing a field impossible.
+    """
+    path = path or fields_file()
+    validate_fields(fields, path)
+    atomic_write_json(path, fields, expected_mtime=known_mtime)
+    return fields
 
 
 def warranty_option_needs_number(option):

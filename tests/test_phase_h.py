@@ -205,14 +205,34 @@ class SafeSettingsUpdates(TempApp):
         self.assertEqual(self.settings(), before, "the file must be untouched")
 
     def test_a_concurrent_hand_edit_is_detected(self):
-        path = os.path.join(self.dir, "appsettings.json")
-        old = os.path.getmtime(path)
-        os.utime(path, (old - 100, old - 100))   # pretend we read it earlier
+        """The caller passes the mtime it *read* at; a newer file must not be clobbered.
 
-        import unittest.mock as mock
-        with mock.patch.object(config.os.path, "getmtime", side_effect=[old - 100, old]):
-            with self.assertRaises(config.ConfigConflict):
-                config.update_app_settings({"company": {"phone": "555-0100"}})
+        The earlier version of this test mocked getmtime and so passed against an
+        implementation that captured the mtime at save time -- when the file had
+        already been edited, making the check useless. Drive the real file
+        instead.
+        """
+        path = os.path.join(self.dir, "appsettings.json")
+        read_mtime = config.file_mtime(path)
+
+        # Someone edits the file by hand after we read it.
+        with open(path, "r", encoding="utf-8") as f:
+            edited = json.load(f)
+        edited["company"]["name"] = "Edited By Hand"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(edited, f)
+        os.utime(path, (read_mtime + 5, read_mtime + 5))
+
+        with self.assertRaises(config.ConfigConflict):
+            config.update_app_settings({"company": {"phone": "555-0100"}},
+                                       known_mtime=read_mtime)
+        self.assertEqual(self.settings()["company"]["name"], "Edited By Hand",
+                         "the hand edit must survive")
+
+    def test_omitting_the_mtime_skips_the_check(self):
+        """Documented escape hatch for a read-modify-write that happens in one go."""
+        config.update_app_settings({"company": {"phone": "555-0100"}})
+        self.assertEqual(self.settings()["company"]["phone"], "555-0100")
 
     def test_schema_version_is_kept_current(self):
         config.update_app_settings({"company": {"phone": "555-0100"}})
