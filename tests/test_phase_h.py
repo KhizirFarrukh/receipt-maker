@@ -108,6 +108,67 @@ class MissingLogoIsReported(TempApp):
         self.assertEqual(code, cli.EXIT_OK, "a missing logo is a warning, not a failure")
 
 
+class FooterPolicyLinks(TempApp):
+    """The footer links to the policy pages, and never to nowhere."""
+
+    def footer_body(self):
+        import receipt_render
+        receipt_render.clear_template_cache()
+        return receipt_render.build_page_footer_template().split("</style>")[1]
+
+    def test_the_old_signature_notice_is_gone(self):
+        self.assertNotIn("digitally signed", self.footer_body())
+        self.assertNotIn("chawlatech", self.footer_body().lower())
+
+    def test_no_urls_means_no_anchors_but_the_words_remain(self):
+        body = self.footer_body()
+        self.assertNotIn("<a href", body, "an empty href is a link to nowhere")
+        self.assertIn("Terms of Service", body, "the wording must still print")
+        self.assertIn("Privacy Policy", body)
+        self.assertIn("Warranty Policy", body)
+
+    def test_configured_urls_become_links(self):
+        import re
+        config.update_app_settings({"links": {
+            "terms_url": "https://example.com/terms",
+            "privacy_url": "https://example.com/privacy",
+            "warranty_url": "https://example.com/warranty"}})
+        found = dict((t, h) for h, t in
+                     re.findall(r'<a href="([^"]*)">([^<]*)</a>', self.footer_body()))
+        self.assertEqual(found["Terms of Service"], "https://example.com/terms")
+        self.assertEqual(found["Privacy Policy"], "https://example.com/privacy")
+        self.assertEqual(found["Warranty Policy"], "https://example.com/warranty")
+
+    def test_one_configured_link_does_not_force_the_others(self):
+        config.update_app_settings({"links": {"terms_url": "https://example.com/terms"}})
+        body = self.footer_body()
+        self.assertIn('<a href="https://example.com/terms">Terms of Service</a>', body)
+        self.assertIn("Privacy Policy", body)
+        self.assertNotIn('href=""', body)
+
+    def test_an_unsafe_scheme_is_refused(self):
+        """An href is a code context; escaping cannot make javascript: safe."""
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.update_app_settings({"links": {"terms_url": "javascript:alert(1)"}})
+        self.assertEqual(ctx.exception.key, "links.terms_url")
+
+    def test_mailto_is_allowed(self):
+        config.update_app_settings({"links": {"terms_url": "mailto:legal@example.com"}})
+        self.assertIn("mailto:legal@example.com", self.footer_body())
+
+    def test_safe_url_helper(self):
+        import receipt_render
+        self.assertEqual(receipt_render.safe_url("https://x.test"), "https://x.test")
+        self.assertEqual(receipt_render.safe_url("javascript:alert(1)"), "")
+        self.assertEqual(receipt_render.safe_url("file:///etc/passwd"), "")
+        self.assertEqual(receipt_render.safe_url(""), "")
+
+    def test_ampersands_in_a_url_are_escaped_for_the_attribute(self):
+        config.update_app_settings(
+            {"links": {"terms_url": "https://example.com/t?a=1&b=2"}})
+        self.assertIn("a=1&amp;b=2", self.footer_body())
+
+
 class RememberedAnswers(TempApp):
     """H4: answer 'open the folder?' once and have it stick."""
 

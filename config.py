@@ -231,6 +231,14 @@ DEFAULT_APP_SETTINGS = {
     "terms_page": {
         "enabled": True,
     },
+    # Policy pages linked from the receipt footer. Empty means "no link": the
+    # wording still prints, it just is not a hyperlink, so a receipt never shows
+    # a link to nowhere.
+    "links": {
+        "terms_url": "",
+        "privacy_url": "",
+        "warranty_url": "",
+    },
     # Remembered answers to questions the app would otherwise keep asking.
     # `ask_open_folder` false means "stop asking and just do what
     # open_folder_after_generate says".
@@ -685,6 +693,20 @@ def validate(settings, filename=None):
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
         raise ConfigError(
             "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
+
+    links = settings.get("links")
+    if not isinstance(links, dict):
+        raise ConfigError("must be an object", filename, "links")
+    for key, value in links.items():
+        if not isinstance(value, str):
+            raise ConfigError("must be text", filename, f"links.{key}")
+        url = value.strip()
+        if url and not url.lower().startswith(("http://", "https://", "mailto:")):
+            raise ConfigError(
+                f"must start with http://, https:// or mailto: (got {url!r}). "
+                f"Other schemes are refused because the link is embedded in a PDF "
+                f"that goes to customers.",
+                filename, f"links.{key}")
 
     ui = settings.get("ui")
     if not isinstance(ui, dict):

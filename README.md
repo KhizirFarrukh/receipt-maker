@@ -13,6 +13,7 @@ A Python tkinter desktop app for generating A4 PDF sales receipts.
 - Configurable business/header details through `appsettings.json`.
 - PDF generation through Playwright/Chromium.
 - Every receipt is digitally signed (PAdES) with your private key, so a forged or edited receipt fails verification against your public certificate. See [Receipt Authenticity](#receipt-authenticity-digital-signatures).
+- The footer links to your Terms of Service, Privacy Policy and Warranty Policy — clickable in the PDF, and configurable under Tools → Settings.
 - A second page with the Warranty & Returns Policy is appended to every receipt.
 - `Templates/header.html` and `Templates/footer.html` are rendered as real PDF page headers and footers on every page.
 - The receipt body is laid out inside the reserved PDF content area, so it does not overlap the header or footer.
@@ -110,9 +111,9 @@ Optional: encrypt the private key with a passphrase and record it in `appsetting
 python keygen.py --passphrase "your-secret-passphrase"
 ```
 
-Once the key exists, every receipt you generate is signed automatically. The footer of
-each receipt reads *"This receipt is digitally signed … Verify its authenticity at
-chawlatech.pk/verify."*
+Once the key exists, every receipt you generate is signed automatically. The signature is
+embedded in the PDF itself, so a reader can check it without the receipt having to announce it —
+which is why the footer carries no "digitally signed" notice.
 
 ### Verifying receipts
 
@@ -263,6 +264,11 @@ Edit `appsettings.json` to change the business details shown in the receipt head
   header and footer, or Chromium clips them.
 - `render` — `block_external_requests` (default `true`; receipts render offline and cannot fetch
   from a CDN), `timeout_ms`, `fail_on_missing_image`.
+- `links` — `terms_url`, `privacy_url` and `warranty_url`, linked from the receipt footer.
+  Set them under **Tools → Settings → Links**. Only `http://`, `https://` and `mailto:` are
+  accepted, since the link is embedded in a PDF that goes to customers.
+  **An unset link still prints its words, just without the hyperlink** — a receipt never carries a
+  link to nowhere. The links are genuinely clickable in the generated PDF.
 - `fonts` — see [Fonts](#fonts).
 
 ### Currency

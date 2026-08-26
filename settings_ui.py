@@ -36,6 +36,13 @@ SETTINGS_SECTIONS = [
          {"filetypes": [("Images", "*.png *.jpg *.jpeg *.gif"), ("All files", "*.*")],
           "help": "Shown at the top of every page. Leave empty for no logo."}),
     ]),
+    ("Links", [
+        ("links.terms_url", "Terms of Service", "text",
+         {"help": "Linked from the receipt footer. Leave empty and the words still "
+                  "print, just without a link."}),
+        ("links.privacy_url", "Privacy Policy", "text", {}),
+        ("links.warranty_url", "Warranty Policy", "text", {}),
+    ]),
     ("Currency", [
         ("currency.symbol", "Symbol", "text", {}),
         ("currency.code", "Code", "text", {"help": "Shown on the form's amount fields only."}),
@@ -305,10 +312,13 @@ class SettingsDialog:
     def __init__(self, parent, on_saved=None):
         self.parent = parent
         self.on_saved = on_saved
-        # Captured now, not at save time: the question is whether the file
-        # changed *while this window was open*.
-        self.mtime = config.file_mtime(config.APP_SETTINGS_FILE)
+        # Load first, then note the mtime. Loading can legitimately rewrite the
+        # file -- a config predating a new setting is migrated on read -- so
+        # capturing the mtime beforehand makes every save look like a clash with
+        # an edit the app itself just made. The question this answers is only
+        # "did the file change while this window was open".
         self.settings = config.load_app_settings()
+        self.mtime = config.file_mtime(config.APP_SETTINGS_FILE)
         self.variables = {}
         self.lists = {}
 
@@ -403,8 +413,8 @@ class FieldsDialog:
     def __init__(self, parent, on_saved=None):
         self.parent = parent
         self.on_saved = on_saved
-        self.mtime = config.file_mtime(config.fields_file())
         self.fields = config.load_fields()
+        self.mtime = config.file_mtime(config.fields_file())
 
         self.win = tk.Toplevel(parent)
         self.win.title("Fields")

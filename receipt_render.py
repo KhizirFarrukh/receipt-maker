@@ -192,6 +192,35 @@ def inline_local_images(html):
     return re.sub(r"src=(['\"])([^'\"]+)\1", replace_src, html, flags=re.IGNORECASE)
 
 
+_SAFE_URL_SCHEMES = ("http://", "https://", "mailto:")
+
+
+def safe_url(value):
+    """A URL fit to put in an href, or '' if it is not one.
+
+    An href is a code context, not a text node -- escaping does not make
+    `javascript:` safe there, so anything outside a known-harmless scheme is
+    dropped rather than sanitised. Config is the user's own, but this is
+    embedded in a PDF that goes to customers.
+    """
+    url = str(value or "").strip()
+    return url if url.lower().startswith(_SAFE_URL_SCHEMES) else ""
+
+
+def unlink_empty_anchors(template_html, placeholder):
+    """Turn `<a href="{{x_url}}">Text</a>` into plain `Text`.
+
+    A policy line should still read correctly when no URL is configured. Leaving
+    the anchor with an empty href would print a link to nowhere; deleting it
+    would silently drop the words.
+    """
+    pattern = re.compile(
+        r"<a\b[^>]*\bhref\s*=\s*(['\"])\s*\{\{" + re.escape(placeholder) +
+        r"\}\}\s*\1[^>]*>(.*?)</a>",
+        flags=re.IGNORECASE | re.DOTALL)
+    return pattern.sub(lambda m: m.group(2), template_html)
+
+
 def render_settings_template(template_html):
     settings = load_app_settings()
     company = settings["company"]
@@ -207,14 +236,25 @@ def render_settings_template(template_html):
         template_html = remove_logo_image_tags(template_html)
         logo_path = ""
 
-    replacements = {
+    # Policy links. An unset or unsafe URL drops the anchor but keeps its words,
+    # so the footer never carries a link to nowhere.
+    links = settings.get("links", {})
+    link_values = {}
+    for key in set(links) | set(config.DEFAULT_APP_SETTINGS.get("links", {})):
+        url = safe_url(links.get(key, ""))
+        link_values[key] = url
+        if not url:
+            template_html = unlink_empty_anchors(template_html, key)
+
+    replacements = {f"{{{{{key}}}}}": escape(url) for key, url in link_values.items()}
+    replacements.update({
         "{{company_name}}": escape(company["name"]),
         "{{company_address}}": escape_address(company["address"]),
         "{{company_phone}}": escape(company["phone"]),
         "{{company_email}}": escape(company["email"]),
         "{{company_logo}}": escape(logo_path),
         "{{company_logo_path}}": escape(logo_path),
-    }
+    })
 
     for placeholder, value in replacements.items():
         template_html = template_html.replace(placeholder, value)
@@ -234,18 +274,16 @@ def default_header_html():
 
 
 def default_footer_html():
+    """Fallback footer, used only if Templates/footer.html is missing."""
     return """
 <div class="footer-text">
     Thank you for choosing {{company_name}}. Warranty claims require original receipt.
 </div>
-<div class="footer-policy">
-    For our detailed warranty policy, visit https://chawlatech.pk/pages/warranty-policy
-</div>
 <div class="footer-terms">
-    By purchasing from Chawla Tech, you agree to our Terms of Service, Privacy Policy, &amp; Warranty Policy (available at chawlatech.pk).
-</div>
-<div class="signature-notice">
-    This receipt is digitally signed by {{company_name}}. Verify its authenticity at chawlatech.pk/verify.
+    By purchasing from {{company_name}} you agree to our
+    <a href="{{terms_url}}">Terms of Service</a>,
+    <a href="{{privacy_url}}">Privacy Policy</a> and
+    <a href="{{warranty_url}}">Warranty Policy</a>.
 </div>"""
 
 
@@ -333,8 +371,9 @@ def build_page_footer_template():
         margin-top: 2px;
         color: #64748b;
     }}
-    .signature-notice {{
-        margin-top: 3px;
+    .footer-terms a {{
+        color: #334155;
+        text-decoration: underline;
     }}
 </style>
 <div class="pdf-footer">

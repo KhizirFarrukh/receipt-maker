@@ -92,8 +92,20 @@ class EditorTestCase(unittest.TestCase):
         self._original_error = settings_ui.messagebox.showerror
         settings_ui.messagebox.showerror = lambda title, msg, **k: self._errors.append(msg)
 
+        # Any unexpected yes/no prompt would open a real modal dialog and hang
+        # the whole suite instead of failing it. Make it a visible failure. Tests
+        # that mean to exercise a prompt replace this themselves.
+        self._original_ask = settings_ui.messagebox.askyesno
+
+        def unexpected_prompt(*args, **kwargs):
+            raise AssertionError(
+                f"an unexpected confirmation dialog was opened: {args[:2]}")
+
+        settings_ui.messagebox.askyesno = unexpected_prompt
+
     def tearDown(self):
         settings_ui.messagebox.showerror = self._original_error
+        settings_ui.messagebox.askyesno = self._original_ask
         self.root.destroy()
         config.set_app_dir(self._app_dir)
         shutil.rmtree(self.dir, ignore_errors=True)
