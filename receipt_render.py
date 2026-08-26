@@ -31,6 +31,7 @@ naming the file and line -- never a silently blank field on a legal document.
 """
 import base64
 import html as html_utils
+import logging
 import mimetypes
 import os
 import re
@@ -48,6 +49,9 @@ from config import (
     read_html_file,
     load_app_settings,
 )
+
+
+logger = logging.getLogger("receipt_maker")
 
 
 def escape(text):
@@ -94,6 +98,59 @@ def resolve_local_asset_path(src):
     return ""
 
 
+def suggest_asset_alternatives(src, limit=3):
+    """Files that look like what `src` was probably meant to name.
+
+    Overwhelmingly the doubled-extension case: Windows hides known file
+    extensions, so saving or renaming a file as "logo.png" produces
+    "logo.png.png" while still *displaying* it as "logo.png". The user sees the
+    right name in Explorer and the app sees a name that does not exist, which is
+    unguessable without being told.
+    """
+    name = os.path.basename(str(src).strip())
+    if not name:
+        return []
+    stem = os.path.splitext(name)[0]
+
+    found = []
+    for base_dir in (config.APP_DIR, RESOURCE_DIR):
+        try:
+            entries = sorted(os.listdir(base_dir))
+        except OSError:
+            continue
+        for entry in entries:
+            if entry == name or entry in found:
+                continue
+            entry_stem = os.path.splitext(entry)[0]
+            if entry.lower().startswith(name.lower() + ".") or entry_stem in (name, stem):
+                if os.path.isfile(os.path.join(base_dir, entry)):
+                    found.append(entry)
+    return found[:limit]
+
+
+def asset_problem(src, label="logo"):
+    """Explain why a configured image cannot be used, or '' when it is fine.
+
+    A configured-but-unusable image used to be dropped in silence, which left no
+    way to find out why a receipt came out without its logo.
+    """
+    clean = str(src or "").strip()
+    if not clean or logo_source_available(clean):
+        return ""
+
+    message = (f"The {label} file was not found, so it will not appear on receipts.\n"
+               f"Configured as: {clean}\n"
+               f"Looked in: {config.APP_DIR}")
+    alternatives = suggest_asset_alternatives(clean)
+    if alternatives:
+        message += ("\n\nA file with a very similar name is there: "
+                    + ", ".join(alternatives)
+                    + f".\nWindows hides known file extensions, so a file saved as "
+                      f"\"{clean}\" can end up named \"{alternatives[0]}\". "
+                      f"Rename it, or point logo_path at the name it actually has.")
+    return message
+
+
 def logo_source_available(src):
     clean_src = str(src).strip()
     if not clean_src:
@@ -136,9 +193,17 @@ def inline_local_images(html):
 
 
 def render_settings_template(template_html):
-    company = load_app_settings()["company"]
+    settings = load_app_settings()
+    company = settings["company"]
     logo_path = company["logo_path"]
     if not logo_source_available(logo_path):
+        problem = asset_problem(logo_path)
+        if problem:
+            # Never fail quietly: without this the receipt just comes out with no
+            # logo and no clue why.
+            if settings.get("render", {}).get("fail_on_missing_image"):
+                raise RuntimeError(problem)
+            logger.warning("%s", problem.replace("\n", " "))
         template_html = remove_logo_image_tags(template_html)
         logo_path = ""
 

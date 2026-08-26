@@ -103,6 +103,16 @@ def run_check():
     print(f"config   OK  {config.APP_SETTINGS_FILE} "
           f"(schema {settings.get(config.SCHEMA_VERSION_KEY)})")
 
+    import receipt_render as _render
+    logo_problem = _render.asset_problem(settings["company"].get("logo_path", ""))
+    if logo_problem:
+        # A warning, not a failure: a receipt without its logo is still a valid
+        # receipt. But it must be said out loud -- that is the whole point.
+        print("logo     WARN " + logo_problem.replace("\n", "\n              "))
+    else:
+        print("logo     OK  "
+              + (settings["company"].get("logo_path") or "(none configured)"))
+
     import receipt_render
     from template_engine import TemplateError
     try:

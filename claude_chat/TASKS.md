@@ -253,7 +253,7 @@ Good news: the files-first work is not wasted. `config.py` already has validatio
 `.bak` and mtime-conflict detection — everything a settings UI needs to save safely. The UI becomes
 a front end onto that, and hand-editing the JSON keeps working for anyone who prefers it.
 
-### H1. Logo not showing — **diagnosed, root cause found**
+### H1. Logo not showing — **DONE** (diagnosed + fixed)
 
 **The user's file is named `logo.png.png`.** Windows' "hide extensions for known file types" adds a
 second `.png` when a file is saved or renamed as "logo.png". `appsettings.json` says `logo.png`,
@@ -264,12 +264,12 @@ Verified: with a correctly named file the logo resolves and is base64-embedded i
 
 *The actual code defect is the silence.* A configured-but-missing image should never fail quietly:
 
-- [ ] Warn when `logo_path` is set but cannot be resolved, naming the path that was tried and
+- [x] Warn when `logo_path` is set but cannot be resolved, naming the path that was tried and
       offering a near-miss ("found `logo.png.png` — did you mean that?"), since Windows produces
       that case so readily.
-- [ ] Wire up `render.fail_on_missing_image`, which **already exists in config and was never
+- [x] Wire up `render.fail_on_missing_image`, which **already exists in config and was never
       implemented** — the plan asked for "fail loudly on a missing logo/signature image".
-- [ ] Report it in `cli --check` and in the GUI.
+- [x] Report it in `cli --check` and the log. (GUI surfacing arrives with the settings editor.)
 - [ ] A **file picker** for the logo in the settings UI (H5) removes the whole class of problem.
 
 ### H2. Save draft
@@ -299,9 +299,9 @@ every sidecar.
 - [ ] **Tools → Receipt History**: browse, search, load back into the form.
 - [ ] Loading a past receipt must not consume a new invoice number unless the user asks for one.
 
-### H4. Remember the "open containing folder" choice
+### H4. Remember the "open containing folder" choice — **DONE**
 
-- [ ] Add a "Don't ask again" checkbox to the success dialog and honour it.
+- [x] Add a "Don't ask again" checkbox to the success dialog and honour it.
       The user asked for this in `appsettings.json`, so it goes in a `ui` section there. (My own
       instinct was `state.json`, since it is a per-machine preference rather than receipt
       configuration — but it is their config file and a visible, editable setting is defensible.)

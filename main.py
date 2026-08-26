@@ -129,6 +129,41 @@ def show_error(parent, title, summary, detail=None):
     parent.wait_window(dialog)
 
 
+def ask_with_memory(parent, title, message, remember_label="Don't ask me again"):
+    """Yes/No dialog with a "remember this" checkbox. Returns (answer, remember).
+
+    tkinter's messagebox cannot carry a checkbox, so this is a small Toplevel.
+    The checkbox is deliberately *below* the buttons' question and unchecked by
+    default: silently training the app to stop asking should be a choice, not
+    something a user does by reflex.
+    """
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    frame = ttk.Frame(dialog, padding=16)
+    frame.pack(fill=tk.BOTH, expand=True)
+    ttk.Label(frame, text=message, wraplength=460, justify=tk.LEFT).pack(anchor=tk.W, fill=tk.X)
+
+    remember = tk.BooleanVar(value=False)
+    ttk.Checkbutton(frame, text=remember_label, variable=remember).pack(
+        anchor=tk.W, pady=(12, 0))
+
+    result = {"answer": False}
+
+    def close(answer):
+        result["answer"] = answer
+        dialog.destroy()
+
+    buttons = ttk.Frame(frame)
+    buttons.pack(pady=(14, 0))
+    ttk.Button(buttons, text="Yes", command=lambda: close(True)).pack(side=tk.LEFT, padx=5)
+    ttk.Button(buttons, text="No", command=lambda: close(False)).pack(side=tk.LEFT, padx=5)
+    dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
+
+    _make_modal(dialog, parent)
+    parent.wait_window(dialog)
+    return result["answer"], bool(remember.get())
+
+
 # ------------------- main application -------------------
 
 
@@ -1024,11 +1059,30 @@ class ReceiptApp:
         self.status_label.config(text=f"Saved ({state}): {out_path}")
         self.refresh_invoice_number()
         logger.info("Generated %s (%s)", out_path, state)
-        if messagebox.askyesno(
-            "Receipt generated",
-            f"✓ Receipt {state} and saved:\n{out_path}\n\nOpen the containing folder?",
-        ):
+
+        ui = load_app_settings().get("ui", {})
+        if ui.get("ask_open_folder", True):
+            answer, remember = ask_with_memory(
+                self.root, "Receipt generated",
+                f"✓ Receipt {state} and saved:\n{out_path}\n\nOpen the containing folder?")
+            if remember:
+                self._remember_open_folder(answer)
+        else:
+            answer = ui.get("open_folder_after_generate", False)
+
+        if answer:
             self._open_folder(os.path.dirname(out_path))
+
+    def _remember_open_folder(self, answer):
+        """Persist the answer so the question is not asked again."""
+        try:
+            config.update_app_settings(
+                {"ui": {"ask_open_folder": False, "open_folder_after_generate": answer}})
+            self.status_label.config(
+                text=f"{self.status_label['text']}  (choice remembered; "
+                     f"change it under Tools → Settings)")
+        except Exception as exc:  # noqa: BLE001 - a preference is never worth failing over
+            logger.warning("Could not remember the open-folder choice: %s", exc)
 
     @staticmethod
     def _open_folder(path):

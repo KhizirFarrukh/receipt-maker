@@ -439,7 +439,22 @@ failing halfway through a receipt; `python cli.py --check` runs the same validat
 - a relative path under the executable folder, such as `assets/logo.png`
 - an absolute path, such as `C:\\Business\\logo.png` (Windows) or `/home/user/logo.png` (Linux)
 
-If `logo_path` is empty or the file is not found, the logo image is skipped and the receipt still renders.
+If `logo_path` is empty the logo is simply skipped. If it is **set but the file cannot be found**,
+the receipt still renders without it and the app says so — in the log, and in
+`python cli.py --check`:
+
+```text
+logo     WARN The logo file was not found, so it will not appear on receipts.
+              Configured as: logo.png
+              A file with a very similar name is there: logo.png.png.
+```
+
+That near-miss is worth knowing about. **Windows hides known file extensions**, so saving or
+renaming a file as `logo.png` often produces `logo.png.png` while Explorer still displays it as
+`logo.png`. If your logo is not appearing, run `--check` first — this is almost always why.
+
+Set `render.fail_on_missing_image` to `true` to treat a missing image as an error instead of a
+warning, so a receipt is never issued without its logo.
 
 ## PDF Filename Config
 

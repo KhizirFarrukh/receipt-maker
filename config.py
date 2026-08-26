@@ -231,6 +231,13 @@ DEFAULT_APP_SETTINGS = {
     "terms_page": {
         "enabled": True,
     },
+    # Remembered answers to questions the app would otherwise keep asking.
+    # `ask_open_folder` false means "stop asking and just do what
+    # open_folder_after_generate says".
+    "ui": {
+        "ask_open_folder": True,
+        "open_folder_after_generate": False,
+    },
     "render": {
         # Receipts must generate offline and identically on every machine, and a
         # template-referenced CDN must not be able to phone out.
@@ -679,6 +686,13 @@ def validate(settings, filename=None):
         raise ConfigError(
             "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
 
+    ui = settings.get("ui")
+    if not isinstance(ui, dict):
+        raise ConfigError("must be an object", filename, "ui")
+    for key in ("ask_open_folder", "open_folder_after_generate"):
+        if not isinstance(ui.get(key, True), bool):
+            raise ConfigError("must be true or false", filename, f"ui.{key}")
+
     fonts = settings.get("fonts")
     if not isinstance(fonts, dict):
         raise ConfigError("must be an object", filename, "fonts")
@@ -797,6 +811,37 @@ def _normalize_strings(settings):
                 if isinstance(value, str):
                     block[key] = value.strip()
     return settings
+
+
+def update_app_settings(changes, path=None, expect_unchanged=True):
+    """Apply nested `changes` to appsettings.json and save. Returns the result.
+
+    Read, merge, validate, write -- in that order, and always through
+    ``atomic_write_json`` so the file keeps a ``.bak`` and cannot be left half
+    written. Validation runs *before* the write, so the app can never save a
+    config it would then refuse to load.
+
+    ``expect_unchanged`` passes the mtime the read saw, turning a concurrent
+    hand-edit into a ConfigConflict instead of silently discarding it. Callers
+    that mean to overwrite pass False.
+    """
+    path = path or APP_SETTINGS_FILE
+    mtime = os.path.getmtime(path) if os.path.exists(path) else None
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            current = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        current = default_app_settings()
+    if not isinstance(current, dict):
+        current = default_app_settings()
+
+    merged = deep_merge(deep_merge(DEFAULT_APP_SETTINGS, current), changes)
+    merged[SCHEMA_VERSION_KEY] = SCHEMA_VERSION
+    validate(merged, path)
+    atomic_write_json(path, merged,
+                      expected_mtime=mtime if expect_unchanged else None)
+    return merged
 
 
 def save_default_app_settings(path=None):

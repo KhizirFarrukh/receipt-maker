@@ -205,7 +205,11 @@ class Stage1GenerationUX(unittest.TestCase):
         import main
         import receipt_service
 
-        orig_gen, orig_ask = receipt_service.generate, main.messagebox.askyesno
+        # Stub the success prompt, not messagebox: _on_generated asks through
+        # ask_with_memory (it carries a "don't ask again" checkbox). Leaving this
+        # pointed at messagebox.askyesno makes the suite open a real modal dialog
+        # and hang forever rather than fail.
+        orig_gen, orig_ask = receipt_service.generate, main.ask_with_memory
         steps = []
 
         def fake_generate(data, out_path, progress_cb=None):
@@ -217,7 +221,7 @@ class Stage1GenerationUX(unittest.TestCase):
 
         try:
             receipt_service.generate = fake_generate
-            main.messagebox.askyesno = lambda *a, **k: False  # skip folder prompt
+            main.ask_with_memory = lambda *a, **k: (False, False)  # skip folder prompt
 
             with receipt_app() as (app, root):
                 self.assertEqual(str(app.generate_button["state"]), "normal")
@@ -229,7 +233,7 @@ class Stage1GenerationUX(unittest.TestCase):
                 self.assertEqual(steps, [1, 2, 3, 4], "progress steps not reported")
                 self.assertIn("signed", app.status_label["text"])
         finally:
-            receipt_service.generate, main.messagebox.askyesno = orig_gen, orig_ask
+            receipt_service.generate, main.ask_with_memory = orig_gen, orig_ask
 
     def test_error_path_shows_diagnostic(self):
         import main
