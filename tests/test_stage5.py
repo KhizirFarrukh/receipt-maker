@@ -623,6 +623,87 @@ class StickyValues(unittest.TestCase):
         self.assertIn("sticky", ctx.exception.key)
 
 
+class ProductBarcode(unittest.TestCase):
+    """A product barcode is not a serial number, and gets its own field.
+
+    Serial number identifies one physical unit; a barcode identifies the
+    product, so every unit of it carries the same code. Conflating them loses
+    the ability to look a product up.
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self._app_dir = config.APP_DIR
+        self.dir = tempfile.mkdtemp(prefix="rm-barcode-")
+        shutil.copy(os.path.join(PROJ, "appsettings.json"),
+                    os.path.join(self.dir, "appsettings.json"))
+        config.set_app_dir(self.dir)
+        self._cleanup = lambda: shutil.rmtree(self.dir, ignore_errors=True)
+
+    def tearDown(self):
+        config.set_app_dir(self._app_dir)
+        self._cleanup()
+
+    def write_fields(self, fields):
+        import json
+        with open(os.path.join(self.dir, "fields.json"), "w", encoding="utf-8") as f:
+            json.dump(fields, f, indent=2)
+
+    def test_shipped_disabled_so_existing_receipts_do_not_change(self):
+        barcode = next(f for f in config.default_fields()["line_item_fields"]
+                       if f["key"] == "barcode")
+        self.assertFalse(barcode["enabled"])
+
+    def test_it_is_separate_from_the_serial_number(self):
+        keys = [f["key"] for f in config.default_fields()["line_item_fields"]]
+        self.assertIn("barcode", keys)
+        self.assertIn("serial", keys)
+
+    def test_an_older_fields_file_gains_it(self):
+        old = config.default_fields()
+        old[config.SCHEMA_VERSION_KEY] = 1
+        old["line_item_fields"] = [f for f in old["line_item_fields"]
+                                   if f["key"] != "barcode"]
+        self.write_fields(old)
+
+        fields = config.load_fields()
+        keys = [f["key"] for f in fields["line_item_fields"]]
+        self.assertIn("barcode", keys)
+        self.assertEqual(keys.index("barcode"), keys.index("sku") + 1,
+                         "a product code belongs next to the SKU")
+
+    def test_the_migration_is_persisted(self):
+        import json
+        old = config.default_fields()
+        old[config.SCHEMA_VERSION_KEY] = 1
+        old["line_item_fields"] = [f for f in old["line_item_fields"]
+                                   if f["key"] != "barcode"]
+        self.write_fields(old)
+        config.load_fields()
+        with open(os.path.join(self.dir, "fields.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)[config.SCHEMA_VERSION_KEY],
+                             config.FIELDS_SCHEMA_VERSION)
+
+    def test_a_field_removed_after_the_migration_stays_removed(self):
+        """The version stamp moves with the file, so this is not re-added forever."""
+        current = config.default_fields()
+        current["line_item_fields"] = [f for f in current["line_item_fields"]
+                                       if f["key"] != "barcode"]
+        self.write_fields(current)
+        fields = config.load_fields()
+        self.assertNotIn("barcode", [f["key"] for f in fields["line_item_fields"]])
+
+    def test_enabling_it_puts_the_column_on_the_receipt(self):
+        html = render(fields_with(("barcode", {"enabled": True})),
+                      [dict(ITEM, barcode="5012345678900")])
+        self.assertIn("<th>Barcode</th>", html)
+        self.assertIn("5012345678900", html)
+
+    def test_disabled_by_default_means_no_column(self):
+        self.assertNotIn("<th>Barcode</th>", render(config.default_fields()))
+
+
 class ItemDialogBuildsFromFields(unittest.TestCase):
     """The dialog has to survive a warranty config that is not the default."""
 

@@ -737,3 +737,127 @@ def _ask_passphrase(parent):
 def open_signing_keys(parent, on_changed=None):
     dialog = SigningKeysDialog(parent, on_changed)
     parent.wait_window(dialog.win)
+
+
+# ---------------------------------------------------------------- history
+class HistoryDialog:
+    """Tools → Receipt History. Reopen a past receipt to correct it.
+
+    The point is not archiving -- it is that noticing a wrong price after the
+    fact should not mean re-typing the whole sale. Records survive their PDFs, so
+    a deleted or misplaced file is still recoverable here.
+    """
+
+    def __init__(self, parent, on_load=None):
+        self.parent = parent
+        self.on_load = on_load
+        self.entries = []
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("Receipt History")
+        self.win.transient(parent)
+
+        frame = ttk.Frame(self.win, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        search_row = ttk.Frame(frame)
+        search_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(search_row, text="Search").pack(side=tk.LEFT)
+        self.search = tk.StringVar()
+        entry = ttk.Entry(search_row, textvariable=self.search, width=40)
+        entry.pack(side=tk.LEFT, padx=(8, 0))
+        entry.focus_set()
+        self.search.trace_add("write", lambda *a: self.refresh())
+        ttk.Label(search_row, text="number, customer, date, item or SKU",
+                  foreground="#64748b").pack(side=tk.LEFT, padx=(8, 0))
+
+        columns = ("date", "number", "customer", "total", "status")
+        self.tree = ttk.Treeview(frame, columns=columns, show="headings",
+                                 height=14, selectmode="browse")
+        for key, label, width in (("date", "Date", 110), ("number", "Receipt No.", 120),
+                                  ("customer", "Customer", 200), ("total", "Total", 110),
+                                  ("status", "Signed", 80)):
+            self.tree.heading(key, text=label)
+            self.tree.column(key, width=width,
+                             anchor=tk.E if key == "total" else tk.W)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.bind("<Double-1>", lambda e: self.load())
+
+        self.note = ttk.Label(frame, foreground="#64748b", wraplength=640,
+                              justify=tk.LEFT)
+        self.note.pack(anchor=tk.W, pady=(8, 0))
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor=tk.W, pady=(10, 0))
+        ttk.Button(buttons, text="Load into form", command=self.load).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Open PDF", command=self.open_pdf).pack(side=tk.LEFT, padx=6)
+        ttk.Button(buttons, text="Close", command=self.win.destroy).pack(side=tk.LEFT)
+
+        self.refresh()
+        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+
+    def refresh(self):
+        import receipt_history
+
+        currency = config.load_app_settings().get("currency")
+        everything = receipt_history.entries()
+        needle = self.search.get()
+        self.entries = [e for e in everything if receipt_history.matches(e, needle)]
+
+        self.tree.delete(*self.tree.get_children())
+        for entry in self.entries:
+            self.tree.insert("", tk.END, values=receipt_history.summarise(entry, currency))
+
+        if not everything:
+            self.note.config(
+                text="No receipts recorded yet. Every receipt you generate from now on "
+                     "is listed here, and stays listed even if its PDF is deleted.")
+        elif not self.entries:
+            self.note.config(text=f"Nothing matches “{needle}”.")
+        else:
+            self.note.config(
+                text=f"{len(self.entries)} of {len(everything)} receipts. "
+                     f"Loading one fills the form with what it contained — correct it and "
+                     f"generate again. It keeps its original number unless you change it.")
+
+    def _selected(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("Receipt History", "Select a receipt first.",
+                                parent=self.win)
+            return None
+        return self.entries[self.tree.index(selection[0])]
+
+    def load(self):
+        entry = self._selected()
+        if entry is None:
+            return
+        if self.on_load:
+            self.on_load(entry)
+        self.win.destroy()
+
+    def open_pdf(self):
+        entry = self._selected()
+        if entry is None:
+            return
+        path = entry.get("pdf_path", "")
+        if not path or not os.path.isfile(path):
+            messagebox.showinfo(
+                "Receipt History",
+                "That receipt's PDF is no longer where it was saved.\n\n"
+                "Its details are still here, so you can load it into the form and "
+                "generate it again.",
+                parent=self.win)
+            return
+        try:
+            os.startfile(path)                                   # noqa: S606
+        except AttributeError:
+            import subprocess
+            subprocess.Popen(["xdg-open", path])
+        except OSError as exc:
+            messagebox.showerror("Could not open", str(exc), parent=self.win)
+
+
+def open_history(parent, on_load=None):
+    dialog = HistoryDialog(parent, on_load)
+    parent.wait_window(dialog.win)

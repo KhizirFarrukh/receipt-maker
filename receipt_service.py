@@ -23,6 +23,7 @@ from config import (
     load_app_settings,
     load_filename_fields,
 )
+import receipt_history
 import receipt_render
 import receipt_signing
 
@@ -274,6 +275,12 @@ def generate(data, out_path, progress_cb=None):
             except OSError:
                 pass
         raise
+
+    # Recorded after the file is safely in place, and never allowed to fail the
+    # receipt: the signed PDF is the legal artifact, a history line is a
+    # convenience. Done here rather than in the GUI so a headless run is recorded
+    # too.
+    receipt_history.record(data, out_path, signed)
 
     report(4, "Saved")
     return signed

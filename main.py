@@ -358,8 +358,13 @@ class ReceiptApp:
                          state="readonly", width=INPUT_WIDTH).grid(
                 row=row, column=1, padx=10, pady=5, sticky=tk.EW)
         else:
-            ttk.Entry(parent, textvariable=var, width=INPUT_WIDTH).grid(
-                row=row, column=1, padx=10, pady=5, sticky=tk.EW)
+            entry = ttk.Entry(parent, textvariable=var, width=INPUT_WIDTH)
+            entry.grid(row=row, column=1, padx=10, pady=5, sticky=tk.EW)
+            # A barcode scanner types the code and then sends Enter. Advancing to
+            # the next field turns that into something useful; letting Enter
+            # submit would save a line item containing nothing but a barcode.
+            entry.bind("<Return>", lambda event: event.widget.tk_focusNext().focus_set()
+                       or "break")
         return var
 
     @staticmethod
@@ -1113,6 +1118,8 @@ class ReceiptApp:
     def _build_menu(self, root):
         menubar = tk.Menu(root)
         tools = tk.Menu(menubar, tearoff=0)
+        tools.add_command(label="Receipt History...", command=self.open_history_dialog)
+        tools.add_separator()
         tools.add_command(label="Settings...", command=self.open_settings_dialog)
         tools.add_command(label="Fields && Columns...", command=self.open_fields_dialog)
         tools.add_command(label="Signing Keys...", command=self.open_signing_keys_dialog)
@@ -1127,6 +1134,47 @@ class ReceiptApp:
         import settings_ui
 
         settings_ui.open_settings(self.root, on_saved=self._settings_saved)
+
+    def open_history_dialog(self):
+        """Browse past receipts and pull one back into the form to correct it."""
+        import settings_ui
+
+        settings_ui.open_history(self.root, on_load=self.load_from_history)
+
+    def load_from_history(self, entry):
+        """Fill the form from a recorded receipt.
+
+        The original invoice number is restored deliberately: correcting a
+        receipt should reissue *that* receipt, not consume a fresh number. The
+        existing collision prompt then decides whether to replace the old PDF or
+        keep both. Changing the number by hand still works, and the counter is
+        pushed past whatever is used.
+        """
+        import receipt_history
+
+        data = receipt_history.to_form_data(entry)
+        self.close_date_picker()
+
+        if data["receipt_type"] in self.type_labels:
+            self.receipt_type.set(data["receipt_type"])
+        self.cust_name.set(data["cust"])
+        self.cust_phone.set(data["phone"])
+        self.cust_email.set(data["email"])
+        self.shipping.set(data["shipping"])
+        if data["date_str"]:
+            self.date.set(data["date_str"])
+
+        for child in self.items_tree.get_children():
+            self.items_tree.delete(child)
+        for item in data["items"]:
+            self.items_tree.insert("", tk.END, values=self.item_to_row(item))
+
+        # Set the number last: refresh_invoice_number would otherwise overwrite
+        # it, and _claim_invoice_number compares against the suggestion to decide
+        # whether to consume a new number.
+        self.inv_no.set(data["inv_no"])
+        self.status_label.config(
+            text=f"Loaded {data['inv_no']} from history — edit and generate to reissue it")
 
     def open_signing_keys_dialog(self):
         """Create or import the key that signs receipts, without a command line."""
@@ -1257,6 +1305,7 @@ def run_smoke_test():
         # build reported success.
         import settings_ui  # noqa: F401
         import invoice_counter  # noqa: F401
+        import receipt_history  # noqa: F401
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")
@@ -1279,6 +1328,8 @@ def run_smoke_test():
             "Online",
             1.0,
         )
+        # Deliberately render_pdf and not generate(): a build check must not add
+        # a fake receipt to the user's history or consume an invoice number.
         receipt_service.render_pdf(html_content, pdf_path)
     except Exception:
         detail = traceback.format_exc()

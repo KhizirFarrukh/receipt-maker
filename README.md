@@ -61,6 +61,26 @@ python main.py
 
 Generated PDFs are written to `invoices/`.
 
+## Receipt History
+
+Every receipt you generate is recorded, so getting a detail wrong does not mean typing the whole
+sale again. **Tools → Receipt History…** lists them all — search by receipt number, customer, date,
+item or SKU — and *Load into form* fills the form with what that receipt contained. Correct the
+mistake and generate again.
+
+**The record outlives the PDF.** It does not matter if the file was deleted, moved or renamed; the
+receipt is still there and can be reissued.
+
+A reloaded receipt **keeps its original number**, so correcting one reissues *that* receipt rather
+than consuming a fresh number. If the old PDF is still there you are asked whether to replace it or
+keep both. Changing the number by hand still works.
+
+Records live in `invoices/.archive/history.jsonl` — one JSON object per line, kept in a subfolder
+so customer details are not mixed in with the receipts you browse. Line items are a
+variable-length list whose fields you can configure, which is why this is JSON rather than a
+spreadsheet format. **The file contains customer names, phone numbers and email addresses**, so
+treat it as you would the receipts themselves.
+
 ## Receipt Authenticity (Digital Signatures)
 
 Every receipt is sealed with a **PAdES digital signature** using your store's private
@@ -219,6 +239,7 @@ Everything below can be edited **inside the app** — you do not need to open a 
 | **Tools → Settings…** | Business details and logo, currency, tax, dates, page margins, invoice numbering, signing, interface preferences (`appsettings.json`) |
 | **Tools → Fields & Columns…** | The item table's columns, extra receipt fields, and the warranty options (`fields.json`) |
 | **Tools → Signing Keys…** | Create or import the key that signs receipts, and see when its certificate expires |
+| **Tools → Receipt History…** | Every receipt you have generated — search it, and load one back into the form to correct and reissue |
 
 Saving validates first, so a value the app would refuse to load is refused *before* anything is
 written, with a message naming the exact setting. Every save keeps a timestamped `.bak`, and if the

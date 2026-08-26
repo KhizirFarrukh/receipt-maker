@@ -271,3 +271,7 @@ tests/fixtures/env/*.bak
 # Remembered machine state (sticky values). Per-install, not source.
 state.json
 tests/fixtures/env/state.json
+
+# Receipt history: the record of what was generated, kept out of the browsable
+# receipts folder.
+invoices/.archive/

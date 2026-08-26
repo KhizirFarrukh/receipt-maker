@@ -14,22 +14,21 @@ Last updated: 2026-08-26.
 
 ---
 
-## 1. Product barcode  *(small, do first)*
+## 1. Product barcode — **DONE**
 
-A **product barcode** (EAN/UPC/GTIN), separate from the existing serial number. The two are
-different things and should not share a field:
+A **product barcode** (EAN/UPC/GTIN), separate from the serial number. The two are different
+things and do not share a field:
 
 - **Serial number** identifies *this one physical unit* — unique per item sold.
 - **Barcode** identifies *the product* — every unit of it carries the same code.
 
-- [ ] Ship `barcode` as a built-in line-item field (`fields.json`), off by default so existing
-      receipts do not change.
-- [ ] Scanner support: a barcode scanner types the code and presses Enter, so the item dialog
-      should accept that without submitting the form prematurely.
-- [ ] Once the product catalogue exists (below), scanning a barcode should fill the whole line.
-
-*Available today as a workaround:* add a custom `barcode` column under **Tools → Fields &
-Columns**. That gets the column onto the receipt; it does not give you lookup.
+- [x] `barcode` ships as a built-in line-item field, **disabled by default** so existing receipts
+      do not change. Enable it under **Tools → Fields & Columns**.
+- [x] An existing `fields.json` gains it by migration (added next to SKU, disabled). A field
+      deleted *after* that migration stays deleted — the version stamp moves with the file.
+- [x] Scanner support: Enter in an item field advances to the next field rather than submitting,
+      so a scanner that types-then-Enters cannot save a line containing only a barcode.
+- [ ] Once the catalogue exists (§2), scanning a barcode should fill the whole line.
 
 ## 2. Product catalogue and inventory  *(large — the main new feature)*
 
@@ -93,10 +92,13 @@ pricing mistake — so the UI must name which one it is using:
 
 ## 4. Carried over from the current work (see TASKS.md Phase H)
 
-- [ ] **H3 — receipt history.** Record every generated receipt's data so a mistake can be fixed by
-      loading it back into the form, even if the PDF was deleted. Recommended as JSON (line items
-      are a variable-length list with configurable fields, which CSV cannot hold without breaking);
-      a CSV *export* alongside it is easy if spreadsheet access is wanted.
+- [x] **H3 — receipt history. DONE.** Tools → Receipt History lists every generated receipt,
+      searchable by number, customer, date, item or SKU, and loads one back into the form to
+      correct and reissue. Stored as one JSON object per line in
+      `invoices/.archive/history.jsonl`. The record outlives its PDF, and a reloaded receipt keeps
+      its original number so correcting one consumes no new number.
+      - [ ] *Still open:* a CSV **export** for spreadsheet use — easy on top of the JSON, and the
+            right way round (JSON as the source of truth, CSV as a view).
 - [ ] **H2 — save draft.** Store an in-progress receipt and restore it later. Consumes no invoice
       number.
 - [ ] **H6 (remainder) — image signature.** A scanned signature image on the receipt. **It is
@@ -107,14 +109,15 @@ pricing mistake — so the UI must name which one it is using:
 
 ## 5. From the original plan, still outstanding
 
-- [ ] **Stage 7 — archive sidecar and diagnostics.** Pairs naturally with receipt history (§4);
-      build them together rather than twice. Includes `--doctor`.
+- [ ] **Stage 7 — diagnostics (`--doctor`).** The archive half is now covered by receipt history;
+      what remains is the environment check: missing browser, unreadable key, expiring certificate,
+      read-only output folder.
 - [ ] **Stage 8 — polish.** Configurable filename patterns (and the validation that a pattern must
       contain the invoice-number token), reprint from archive with a DUPLICATE badge, "restore
       default templates", pinned Playwright version.
-- [ ] **Neutral defaults.** `Templates/terms.html` and `Templates/footer.html` still carry Chawla
-      Tech wording and chawlatech.pk links. They are ordinary editable templates now, so this is a
-      content edit — but the shipped defaults should be generic.
+- [ ] **Neutral defaults.** `Templates/terms.html` still carries Chawla Tech wording. It is an
+      ordinary editable template now, so this is a content edit — but the shipped default should be
+      generic. (`footer.html` was neutralised when the policy links landed.)
 - [ ] **No bundled font.** The `@font-face` embedding works and is off by default; no OFL font ships
       with the app, so a receipt can still look slightly different on another machine.
 - [ ] **`document.title`.** "SALES RECEIPT" is a literal in `receipt_info.html` — editable, but

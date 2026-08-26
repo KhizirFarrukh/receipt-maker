@@ -289,14 +289,26 @@ RESERVED_FIELD_KEYS = frozenset({
 #: Shipped field definitions. These reproduce today's form and receipt exactly;
 #: `enabled: false` hides a column, and `optional_column` keeps the old
 #: behaviour where Discount and Tax appear only when a line actually uses them.
+#: Bumped when a new built-in field is shipped, so existing fields.json files
+#: get it too. The lists are replaced wholesale on load rather than merged (their
+#: order is the column order), so without a migration a new built-in would only
+#: ever reach brand-new installs.
+FIELDS_SCHEMA_VERSION = 2
+
 DEFAULT_FIELDS = {
-    SCHEMA_VERSION_KEY: 1,
+    SCHEMA_VERSION_KEY: FIELDS_SCHEMA_VERSION,
     # Extra receipt-level fields, printed under the Bill To box. Empty by
     # default -- customer name, phone and email are built in. Add entries here
     # for things like a PO number, a salesperson, or a vehicle registration.
     "receipt_fields": [],
     "line_item_fields": [
         {"key": "sku", "label": "SKU", "type": "text", "enabled": True},
+        # A *product* barcode (EAN/UPC/GTIN): every unit of the product carries
+        # the same code. That is a different thing from the serial number below,
+        # which identifies one physical unit, so they get separate fields.
+        # Shipped disabled so existing receipts do not change; enable it under
+        # Tools -> Fields & Columns.
+        {"key": "barcode", "label": "Barcode", "type": "text", "enabled": False},
         {"key": "desc", "label": "Item Description", "type": "text",
          "enabled": True, "required": True},
         {"key": "serial", "label": "Serial Number", "type": "text", "enabled": True},
@@ -980,8 +992,43 @@ def load_fields(path=None):
             fields[key] = raw[key]
     if isinstance(raw.get("warranty"), dict):
         fields["warranty"] = deep_merge(DEFAULT_FIELDS["warranty"], raw["warranty"])
+
+    fields, changed = migrate_fields(fields, raw.get(SCHEMA_VERSION_KEY, 1))
     validate_fields(fields, path)
+    if changed:
+        try:
+            atomic_write_json(path, fields, keep_backup=True)
+        except OSError:
+            pass          # keep running on the in-memory value
     return fields
+
+
+def migrate_fields(fields, version):
+    """Bring an older fields.json up to date. Returns (fields, changed).
+
+    Only *adds* built-in fields introduced since the file was written, and adds
+    them disabled so nothing about an existing receipt changes. A field the user
+    deleted after that version stays deleted, because the version stamp moves
+    with the file.
+    """
+    changed = False
+    present = {f.get("key") for f in fields.get("line_item_fields", []) if isinstance(f, dict)}
+
+    if version < 2:
+        # v2 introduced the product barcode.
+        if "barcode" not in present:
+            defaults = {f["key"]: f for f in DEFAULT_FIELDS["line_item_fields"]}
+            items = fields.setdefault("line_item_fields", [])
+            # Sit it next to SKU, where a product code belongs.
+            index = next((i + 1 for i, f in enumerate(items)
+                          if isinstance(f, dict) and f.get("key") == "sku"), len(items))
+            items.insert(index, dict(defaults["barcode"]))
+            changed = True
+
+    if fields.get(SCHEMA_VERSION_KEY) != FIELDS_SCHEMA_VERSION:
+        fields[SCHEMA_VERSION_KEY] = FIELDS_SCHEMA_VERSION
+        changed = True
+    return fields, changed
 
 
 def validate_fields(fields, filename=None):
