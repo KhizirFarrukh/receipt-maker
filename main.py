@@ -616,17 +616,34 @@ class ReceiptApp:
             vars_[field["key"]] = self._build_field_widget(
                 dialog, field, row, remembered.get(field["key"]))
 
+        # Pick from the catalogue instead of typing the same product again.
+        # Sits above the fields it fills in, where it reads as a starting point
+        # rather than an afterthought.
+        # Rows are counted rather than derived from list lengths: the field list
+        # is user-configurable and the warranty block is optional, so arithmetic
+        # on len(labels) breaks the moment either changes.
+        next_row = len(labels)
+
+        picker_row = ttk.Frame(dialog)
+        picker_row.grid(row=next_row, column=0, columnspan=2,
+                        padx=10, pady=(4, 2), sticky=tk.W)
+        ttk.Button(picker_row, text="Pick a product…",
+                   command=lambda: self._fill_from_product(vars_)).pack(side=tk.LEFT)
+        ttk.Label(picker_row, text="or scan a barcode into it",
+                  foreground="#64748b").pack(side=tk.LEFT, padx=(8, 0))
+        next_row += 1
+
         # Warranty options come from fields.json. An option containing "#"
         # prompts for a whole number, so one entry covers 12 Months, 24 Months
         # and anything else the shop offers.
         warranty_cfg = self.fields.get("warranty", {})
         warranty_options = [str(o) for o in warranty_cfg.get("options", []) if str(o).strip()]
-        warranty_row = len(labels)
         warranty_type = tk.StringVar(value=warranty_options[0] if warranty_options else "")
         warranty_number = tk.StringVar(value="12")
         number_entry = None
 
         if warranty_cfg.get("enabled", True) and warranty_options:
+            warranty_row = next_row
             ttk.Label(dialog, text=warranty_cfg.get("label", "Warranty")).grid(
                 row=warranty_row, column=0, padx=10, pady=5, sticky=tk.W)
             # Same width and sticky as every other input, so the right-hand edge
@@ -646,9 +663,7 @@ class ReceiptApp:
             number_entry = ttk.Entry(dialog, textvariable=warranty_number,
                                      width=INPUT_WIDTH)
             number_entry.grid(row=number_row, column=1, padx=10, pady=5, sticky=tk.EW)
-            months_row = number_row
-        else:
-            months_row = warranty_row - 1        # nothing shown; keep the layout tight
+            next_row = number_row + 1
 
         def on_warranty_type_change(event=None):
             if number_entry is None:
@@ -702,7 +717,7 @@ class ReceiptApp:
             dialog.destroy()
 
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=months_row + 1, column=0, columnspan=2, pady=15)
+        button_frame.grid(row=next_row, column=0, columnspan=2, pady=15)
         ttk.Button(button_frame, text="Save" if editing else "Add", command=save).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
 
@@ -738,6 +753,29 @@ class ReceiptApp:
         state = config.load_state()
         state["sticky_line_item"] = sticky
         config.save_state(state)
+
+    def _fill_from_product(self, vars_):
+        """Fill the item dialog from a catalogue product.
+
+        Only fills fields the product actually carries, and leaves quantity and
+        anything already typed alone -- picking a product should be a shortcut,
+        not a reset of work already done.
+        """
+        import product_catalogue
+        import settings_ui
+
+        chosen = settings_ui.pick_product(self.root)
+        if not chosen:
+            return
+
+        line = product_catalogue.to_line_item(chosen)
+        for key, value in line.items():
+            if key == "qty" or key not in vars_ or value in ("", None):
+                continue
+            var = vars_[key]
+            if isinstance(var, tk.BooleanVar):
+                continue
+            var.set(str(value))
 
     def row_to_item(self, values):
         """Tree row (a positional tuple) -> a dict keyed by field key.
@@ -1118,6 +1156,7 @@ class ReceiptApp:
     def _build_menu(self, root):
         menubar = tk.Menu(root)
         tools = tk.Menu(menubar, tearoff=0)
+        tools.add_command(label="Products...", command=self.open_products_dialog)
         tools.add_command(label="Receipt History...", command=self.open_history_dialog)
         tools.add_separator()
         tools.add_command(label="Settings...", command=self.open_settings_dialog)
@@ -1134,6 +1173,13 @@ class ReceiptApp:
         import settings_ui
 
         settings_ui.open_settings(self.root, on_saved=self._settings_saved)
+
+    def open_products_dialog(self):
+        """Manage the catalogue of products a receipt can be built from."""
+        import settings_ui
+
+        settings_ui.open_products(
+            self.root, on_saved=lambda: self.status_label.config(text="Products saved"))
 
     def open_history_dialog(self):
         """Browse past receipts and pull one back into the form to correct it."""
@@ -1306,6 +1352,7 @@ def run_smoke_test():
         import settings_ui  # noqa: F401
         import invoice_counter  # noqa: F401
         import receipt_history  # noqa: F401
+        import product_catalogue  # noqa: F401
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         pdf_path = os.path.join(OUTPUT_DIR, "_packaged_smoke_test.pdf")

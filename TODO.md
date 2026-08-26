@@ -48,25 +48,40 @@ Pick a product instead of retyping its details on every receipt.
 | `stock_count` | Units in stock |
 | `serial_numbers` | Serials of the units held |
 
-- [ ] **Variants.** A product has variants (size, colour, capacity) and each variant carries its
-      own sku, barcode, stock and prices. Worth settling early whether a variant is a full product
-      with a parent, or a lightweight child — retrofitting that later is painful.
-- [ ] **Pick a product** in the item dialog, by name, SKU or barcode, filling the line in one step.
-- [ ] Manage the catalogue in-app (add, edit, search, import/export).
+- [x] **Variants — done, settled as a lightweight child that overrides its parent.** A variant
+      states only what differs and inherits the rest, so nothing has to be kept in step by hand.
+      Its `name` is the *label* ("Blue"), not a replacement product name — treating it as an
+      override printed "Blue (Blue)" and lost the product.
+- [x] **Pick a product** in the item dialog — search by name, SKU or barcode, or scan straight
+      into the search box. Fills the line and leaves anything already typed alone.
+- [x] Manage the catalogue in-app (**Tools → Products**), with the same validate-then-atomic-write
+      path as the other editors: duplicate SKUs and barcodes are refused, because a scan has to
+      identify exactly one product.
+- [ ] Import/export (CSV) for bulk editing.
+- [ ] **Stock is stored but not spent.** Nothing decrements on sale yet — see the open question
+      below, which is now concrete rather than hypothetical since reissuing from history exists.
+- [ ] Serial-number selection: sell a *specific* held serial rather than typing one.
 
 ### Decisions to settle before building
 
-**Storage — JSON or SQLite?** Everything else in this app is hand-editable JSON, and that has
-worked well. But a catalogue is a *database*: it wants lookup by three different keys, it grows to
-thousands of rows, and stock counts are written far more often than settings are.
+**Storage — settled on JSON, revising an earlier recommendation.**
 
-- *JSON* keeps it inspectable and consistent with the rest of the app; fine into the low thousands
-  of products, and easy to back up or diff.
-- *SQLite* handles size and concurrent access properly and makes barcode lookup instant, at the
-  cost of no longer being readable in a text editor.
+This file first recommended SQLite. On a closer look that was the wrong call, and the deciding
+factor is the shape of the data rather than its size:
 
-**Recommendation:** SQLite for the catalogue, with JSON/CSV import and export so nothing is
-locked in. Worth a decision before any code is written.
+- **Variants and serial-number lists are nested and variable.** A product holds a list of serials
+  and a list of variants that override some of the parent's fields. That is natural in JSON and
+  needs three tables and joins in SQL. SQLite is strongest for flat, indexed rows — which this is
+  not.
+- **The scale does not justify it.** The plan lists multi-user as a non-goal, so this is one shop
+  on one machine: hundreds to low thousands of products, where a whole-file read is microseconds.
+- **It keeps the app's character.** Every other piece of data here is an inspectable file the user
+  can back up, diff, or fix by hand, and the validated atomic-write-with-`.bak` machinery already
+  exists to write it safely.
+
+SQLite would win if this became multi-till or grew to tens of thousands of products with
+concurrent writers. It is worth revisiting then; the JSON shape maps onto tables cleanly enough
+that it would not be a rewrite.
 
 **Stock counting has the same trap as invoice numbers.** If generating a receipt decrements stock,
 then: what happens when generation fails after the decrement? When a receipt is deleted? When one

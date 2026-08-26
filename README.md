@@ -61,6 +61,28 @@ python main.py
 
 Generated PDFs are written to `invoices/`.
 
+## Products
+
+Keep the things you sell in **Tools → Products…** so you can put one on a receipt without typing
+its details again. Each product holds a SKU, barcode, name, list / cost / bulk / sell prices, a
+stock count and a list of serial numbers.
+
+**Variants** — colours, sizes, capacities — hang off a product and only state what differs. A
+variant with its own SKU and barcode inherits the parent's name and prices unless it overrides
+them, so there is nothing to keep in step by hand. A variant's `name` is its *label* ("Blue"), and
+the receipt prints `Mechanical Keyboard (Blue)`.
+
+In the Add Item dialog, **Pick a product…** opens a searchable list — type a name, SKU or barcode,
+or scan a barcode straight into the search box and it selects the match. Picking a product fills
+in the description, SKU, barcode and price, and leaves anything you have already typed alone.
+
+Prices fall back sell → list → bulk, so a product priced only one way still sells rather than
+landing on a receipt at zero.
+
+**Stock is recorded but not yet deducted when you sell.** That is deliberate rather than
+forgotten: deciding what happens when generation fails partway, or when you reissue an old receipt
+from history, needs the same care invoice numbering got, and is on the backlog.
+
 ## Receipt History
 
 Every receipt you generate is recorded, so getting a detail wrong does not mean typing the whole
@@ -240,6 +262,7 @@ Everything below can be edited **inside the app** — you do not need to open a 
 | **Tools → Fields & Columns…** | The item table's columns, extra receipt fields, and the warranty options (`fields.json`) |
 | **Tools → Signing Keys…** | Create or import the key that signs receipts, and see when its certificate expires |
 | **Tools → Receipt History…** | Every receipt you have generated — search it, and load one back into the form to correct and reissue |
+| **Tools → Products…** | The catalogue you sell from (`products.json`) |
 
 Saving validates first, so a value the app would refuse to load is refused *before* anything is
 written, with a message naming the exact setting. Every save keeps a timestamped `.bak`, and if the

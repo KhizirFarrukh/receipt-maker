@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 import config
+import product_catalogue
 
 # ---------------------------------------------------------------- form model
 # (dotted path, label, kind, options)
@@ -861,3 +862,190 @@ class HistoryDialog:
 def open_history(parent, on_load=None):
     dialog = HistoryDialog(parent, on_load)
     parent.wait_window(dialog.win)
+
+
+# ---------------------------------------------------------------- products
+PRODUCT_COLUMNS = [
+    ("sku", "SKU", "text", {}),
+    ("barcode", "Barcode", "text", {}),
+    ("name", "Name", "text", {}),
+    ("list_price", "List price", "text", {"help": "Price of a single item."}),
+    ("cost_price", "Cost price", "text", {"help": "What you paid for it."}),
+    ("bulk_price", "Bulk price", "text", {"help": "Price when selling in quantity."}),
+    ("sell_price", "Sell price", "text", {"help": "What a receipt uses. Falls back to "
+                                                  "the list price if empty."}),
+    ("stock_count", "In stock", "text", {}),
+]
+
+
+class ProductsDialog:
+    """Tools → Products. The catalogue you sell from."""
+
+    def __init__(self, parent, on_saved=None):
+        self.parent = parent
+        self.on_saved = on_saved
+        self.catalogue = product_catalogue.load()
+        self.mtime = config.file_mtime(product_catalogue.catalogue_path())
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("Products")
+        self.win.transient(parent)
+
+        frame = ttk.Frame(self.win, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frame, foreground="#64748b", justify=tk.LEFT, wraplength=640,
+            text="Products you can pick from when adding an item to a receipt.\n"
+                 "Stock is recorded but not yet deducted when you sell — that is still "
+                 "to come.").pack(anchor=tk.W, pady=(0, 8))
+
+        self.editor = RecordListEditor(frame, "", PRODUCT_COLUMNS,
+                                       self.catalogue.get("products", []))
+        self.editor.pack(fill=tk.BOTH, expand=True)
+
+        footer = ttk.Frame(self.win, padding=(12, 0, 12, 12))
+        footer.pack(fill=tk.X)
+        ttk.Label(footer, text=product_catalogue.catalogue_path(),
+                  foreground="#64748b").pack(side=tk.LEFT)
+        ttk.Button(footer, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(footer, text="Save", command=self.save).pack(side=tk.RIGHT, padx=6)
+        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+
+    def save(self):
+        catalogue = dict(self.catalogue)
+        # Keep any variants the grid does not show, so editing a product here
+        # cannot silently drop the colours or sizes hanging off it.
+        existing = {str(p.get("sku", "")).lower(): p
+                    for p in self.catalogue.get("products", []) if isinstance(p, dict)}
+        products = []
+        for record in self.editor.records:
+            entry = {k: v for k, v in record.items() if str(v).strip() != ""}
+            previous = existing.get(str(record.get("sku", "")).lower())
+            if previous and previous.get("variants"):
+                entry["variants"] = previous["variants"]
+            if previous and previous.get("serial_numbers"):
+                entry.setdefault("serial_numbers", previous["serial_numbers"])
+            if "stock_count" in entry:
+                try:
+                    entry["stock_count"] = int(str(entry["stock_count"]).strip())
+                except ValueError:
+                    pass          # let validate() produce the message
+            products.append(entry)
+        catalogue["products"] = products
+
+        try:
+            product_catalogue.save(catalogue, known_mtime=self.mtime)
+        except config.ConfigConflict:
+            if messagebox.askyesno(
+                "Products changed on disk",
+                "products.json was edited outside the app while this window was open.\n\n"
+                "Overwrite it with what is shown here?", parent=self.win):
+                product_catalogue.save(catalogue)
+            else:
+                return
+        except config.ConfigError as exc:
+            messagebox.showerror("That product is not valid", str(exc), parent=self.win)
+            return
+        except OSError as exc:
+            messagebox.showerror("Could not save", str(exc), parent=self.win)
+            return
+
+        if self.on_saved:
+            self.on_saved()
+        self.win.destroy()
+
+
+def open_products(parent, on_saved=None):
+    dialog = ProductsDialog(parent, on_saved)
+    parent.wait_window(dialog.win)
+
+
+class ProductPicker:
+    """Choose a product to put on a receipt. Type to search, or scan a barcode."""
+
+    def __init__(self, parent):
+        self.chosen = None
+        self.catalogue = product_catalogue.load()
+        self.items = product_catalogue.sellable_items(self.catalogue)
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("Pick a product")
+        self.win.transient(parent)
+
+        frame = ttk.Frame(self.win, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        row = ttk.Frame(frame)
+        row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(row, text="Search or scan").pack(side=tk.LEFT)
+        self.search = tk.StringVar()
+        entry = ttk.Entry(row, textvariable=self.search, width=36)
+        entry.pack(side=tk.LEFT, padx=(8, 0))
+        entry.focus_set()
+        self.search.trace_add("write", lambda *a: self.refresh())
+        # A scanner types the code then sends Enter. If it matches a barcode or
+        # SKU exactly, take it straight away -- that is the whole point of a scan.
+        entry.bind("<Return>", lambda e: self.accept_scan())
+
+        columns = ("sku", "barcode", "name", "price", "stock")
+        self.tree = ttk.Treeview(frame, columns=columns, show="headings",
+                                 height=12, selectmode="browse")
+        for key, label, width in (("sku", "SKU", 110), ("barcode", "Barcode", 130),
+                                  ("name", "Name", 240), ("price", "Price", 100),
+                                  ("stock", "In stock", 80)):
+            self.tree.heading(key, text=label)
+            self.tree.column(key, width=width,
+                             anchor=tk.E if key in ("price", "stock") else tk.W)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.bind("<Double-1>", lambda e: self.choose())
+
+        self.note = ttk.Label(frame, foreground="#64748b", wraplength=640, justify=tk.LEFT)
+        self.note.pack(anchor=tk.W, pady=(8, 0))
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor=tk.W, pady=(10, 0))
+        ttk.Button(buttons, text="Use this product", command=self.choose).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Cancel", command=self.win.destroy).pack(side=tk.LEFT, padx=6)
+
+        self.refresh()
+        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+
+    def refresh(self):
+        self.filtered = product_catalogue.search(self.catalogue, self.search.get())
+        self.tree.delete(*self.tree.get_children())
+        for item in self.filtered:
+            name = item.get("name", "")
+            if item.get("variant_name"):
+                name = f"{name} ({item['variant_name']})" if name else item["variant_name"]
+            self.tree.insert("", tk.END, values=(
+                item.get("sku", ""), item.get("barcode", ""), name,
+                item.get("sell_price") or item.get("list_price", ""),
+                item.get("stock_count", "")))
+        if not self.items:
+            self.note.config(text="No products yet. Add them under Tools → Products.")
+        else:
+            self.note.config(text=f"{len(self.filtered)} of {len(self.items)} products.")
+
+    def accept_scan(self):
+        match = product_catalogue.find(self.catalogue, self.search.get())
+        if match:
+            self.chosen = match
+            self.win.destroy()
+        elif len(self.filtered) == 1:
+            self.chosen = self.filtered[0]
+            self.win.destroy()
+
+    def choose(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("Pick a product", "Select a product first.", parent=self.win)
+            return
+        self.chosen = self.filtered[self.tree.index(selection[0])]
+        self.win.destroy()
+
+
+def pick_product(parent):
+    """Show the picker. Returns the chosen catalogue entry, or None."""
+    picker = ProductPicker(parent)
+    parent.wait_window(picker.win)
+    return picker.chosen

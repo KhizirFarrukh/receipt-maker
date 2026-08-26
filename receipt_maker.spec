@@ -18,6 +18,7 @@ signing_binaries = []
 # static analysis. A module missed here breaks only the packaged build, which is
 # the hardest place to notice it.
 signing_hiddenimports = ["receipt_signing", "settings_ui", "invoice_counter",
+                         "product_catalogue",
                          "receipt_history"]
 for _pkg in ("pyhanko", "pyhanko_certvalidator", "asn1crypto", "oscrypto",
              "cryptography", "certifi", "tzlocal", "uritools"):

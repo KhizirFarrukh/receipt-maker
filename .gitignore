@@ -275,3 +275,7 @@ tests/fixtures/env/state.json
 # Receipt history: the record of what was generated, kept out of the browsable
 # receipts folder.
 invoices/.archive/
+
+# The product catalogue is the user's own data, not source.
+products.json
+tests/fixtures/env/products.json
