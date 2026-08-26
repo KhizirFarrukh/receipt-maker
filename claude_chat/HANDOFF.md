@@ -99,6 +99,13 @@ It had held byte-identical from Stage 2 through Stage 5 until then.
 Four bugs were found and fixed while reviewing Stage 4; each has a test in
 `tests/test_regressions.py` saying what it was protecting. Tests: **302**.
 
+**⚠ Direction change, 2026-08-26.** The user has asked for in-app editing of settings, fields,
+signing keys and the logo — *"user dont have to keep opening appsettings or config files"*. That
+**reverses `PLAN-generalization.md`'s explicit non-goal** of "a GUI settings editor (files-first is
+the decision)". It is the user's call and it stands; update the plan's non-goals when the work
+starts, or a later session will read the plan and undo it. See **TASKS.md Phase H** for the full
+list, including a diagnosed logo bug, receipt history, and drafts.
+
 **Next: Stage 6** — signing enhancements (bring-your-own key across the PKCS#8/PKCS#1/encrypted-PEM
 /PKCS#12 format matrix, a Tools → Signing Keys dialog, a known-cert set so key rotation preserves
 historical verification, and the decorative image signature). Then Stage 7 (archive sidecar +

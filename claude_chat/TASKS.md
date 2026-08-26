@@ -236,6 +236,109 @@ the Stage 4 list, but filename *patterns* do not exist yet — filenames are bui
 field list with the number always first, so there is no token to require. It belongs with Stage 8,
 where patterns are introduced.
 
+## Phase H — user-requested work (2026-08-26)
+
+### ⚠ This reverses an approved plan decision — read before starting
+
+`PLAN-generalization.md` lists **"a GUI settings editor (files-first is the decision)"** under
+**Non-goals**, and the whole architecture was built on "settings are JSON, layout is HTML files".
+
+The user has now asked for the opposite, explicitly: *"you have to improvise app in such a way that
+user dont have to keep opening appsettings or config files to edit or add anything, just do it
+within the app."* That is their call and it stands — but the plan document now contradicts the
+product direction, so **update PLAN-generalization.md's non-goals when this work starts**,
+otherwise a later session will read the plan and "helpfully" undo it.
+
+Good news: the files-first work is not wasted. `config.py` already has validation, atomic writes,
+`.bak` and mtime-conflict detection — everything a settings UI needs to save safely. The UI becomes
+a front end onto that, and hand-editing the JSON keeps working for anyone who prefers it.
+
+### H1. Logo not showing — **diagnosed, root cause found**
+
+**The user's file is named `logo.png.png`.** Windows' "hide extensions for known file types" adds a
+second `.png` when a file is saved or renamed as "logo.png". `appsettings.json` says `logo.png`,
+which does not exist, so resolution returns nothing and the `<img>` tag is silently stripped.
+Verified: with a correctly named file the logo resolves and is base64-embedded in the PDF header.
+
+*Immediate fix for the user:* rename `dist\ReceiptGenerator\logo.png.png` to `logo.png`.
+
+*The actual code defect is the silence.* A configured-but-missing image should never fail quietly:
+
+- [ ] Warn when `logo_path` is set but cannot be resolved, naming the path that was tried and
+      offering a near-miss ("found `logo.png.png` — did you mean that?"), since Windows produces
+      that case so readily.
+- [ ] Wire up `render.fail_on_missing_image`, which **already exists in config and was never
+      implemented** — the plan asked for "fail loudly on a missing logo/signature image".
+- [ ] Report it in `cli --check` and in the GUI.
+- [ ] A **file picker** for the logo in the settings UI (H5) removes the whole class of problem.
+
+### H2. Save draft
+
+- [ ] A "Save Draft" button storing the in-progress form (type, number, date, customer, items,
+      shipping, custom fields) so it can be restored later. Drafts are user documents, so they do
+      **not** belong in `state.json` — that is machine state and is excluded from backups.
+      Consume no invoice number: a draft is not a receipt.
+
+### H3. Receipt history + reload into the form
+
+- [ ] Record every generated receipt's full input data so a mistake can be corrected by loading it
+      back into the form and editing, **even if the PDF was deleted**.
+
+**Format recommendation: JSON, not CSV or XML.** A receipt has a variable-length list of line
+items, and Stage 5 made the per-item fields user-configurable — CSV has no way to hold that without
+flattening into unstable columns that break the moment someone adds a field. JSON matches
+`data.json`, which the plan already defines as the CLI/render input format, so one shape serves
+history, reprint and the CLI.
+
+**This largely already exists in the plan** — Stage 7's archive sidecar writes exactly this data
+per receipt, and Stage 8 has reprint-from-sidecar. Bring that forward rather than inventing a
+second store. Add a lightweight index file so the history list opens instantly without reading
+every sidecar.
+
+- [ ] Sidecar per receipt (`invoices/.archive/`), plus an index.
+- [ ] **Tools → Receipt History**: browse, search, load back into the form.
+- [ ] Loading a past receipt must not consume a new invoice number unless the user asks for one.
+
+### H4. Remember the "open containing folder" choice
+
+- [ ] Add a "Don't ask again" checkbox to the success dialog and honour it.
+      The user asked for this in `appsettings.json`, so it goes in a `ui` section there. (My own
+      instinct was `state.json`, since it is a per-machine preference rather than receipt
+      configuration — but it is their config file and a visible, editable setting is defensible.)
+
+### H5. Edit settings inside the app
+
+- [ ] **Tools → Settings**: company details, currency, tax, date format, receipt types, invoice
+      numbering, terms page, fonts — everything in `appsettings.json`. Saves through the existing
+      `validate()` + atomic-write + `.bak` path, so a bad value is refused with the same message
+      as a hand edit. Honour the mtime-conflict check: if the file changed on disk, offer reload
+      rather than clobbering.
+- [ ] **Tools → Fields**: add, rename, reorder, hide line-item and receipt fields; edit warranty
+      options. This is the highest-value editor now that Stage 5 made fields configurable.
+- [ ] A file picker for `logo_path` (closes H1 properly).
+
+### H6. Certificate / signature inside the app
+
+- [ ] **Tools → Signing Keys**: create a key pair, import an existing one, show status and expiry.
+      This *is* Stage 6, which was next anyway — the user's request confirms its priority.
+      Import must cover the format matrix the plan lists (PKCS#8, PKCS#1, DER, encrypted PEM,
+      PKCS#12/`.pfx`), each unsupported case getting a specific message rather than a traceback.
+- [ ] Image signature (`signature_image`) with a file picker. **Keep the README honest that an
+      image signature is decorative, not cryptographic** — it must not be presented as equivalent
+      to the PAdES signature.
+- [ ] Never write the passphrase to disk.
+
+### H7. Umbrella: no file editing required
+
+- [ ] Once H5/H6 land, audit every remaining "edit this JSON" instruction in the README and give
+      it an in-app equivalent. Template *layout* editing (HTML/CSS) stays file-based — that is a
+      code-editing task, not a settings one, and a rich text/HTML editor is out of scope.
+
+### Suggested order
+
+H1 (bug, small) → H4 (small, self-contained) → H5 settings + fields editors (unlocks the umbrella)
+→ H6 / Stage 6 signing → H3 history (largest; pairs with Stage 7) → H2 drafts → H7 audit.
+
 ## State left behind
 
 - Working tree is **uncommitted** on branch `generalization` (auto-commit is not running in this
