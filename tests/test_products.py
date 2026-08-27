@@ -218,8 +218,11 @@ class Validation(unittest.TestCase):
     def test_a_non_numeric_price_is_refused(self):
         self.assert_rejects("must be a number", catalogue(dict(MOUSE, list_price="free")))
 
-    def test_a_negative_stock_count_is_refused(self):
-        self.assert_rejects("whole number", catalogue(dict(MOUSE, stock_count=-1)))
+    def test_a_negative_stock_count_is_allowed(self):
+        """Deliberately permitted. See StockDeduction for why refusing it was a bug:
+        a sale that took stock below zero could not be recorded at all, leaving
+        the figure wrong in the optimistic direction."""
+        pc.validate(catalogue(dict(MOUSE, stock_count=-1)), "products.json")
 
     def test_a_fractional_stock_count_is_refused(self):
         self.assert_rejects("whole number", catalogue(dict(MOUSE, stock_count=1.5)))
@@ -230,6 +233,134 @@ class Validation(unittest.TestCase):
 
     def test_empty_prices_are_allowed(self):
         pc.validate(catalogue(dict(MOUSE, cost_price="", bulk_price="")), "products.json")
+
+
+class StockDeduction(unittest.TestCase):
+    """Stock is committed *after* the receipt exists — the opposite of numbering.
+
+    An invoice number is reserved before rendering and kept even on failure,
+    because a duplicate number is unrecoverable. Stock records that goods
+    actually left, so a failed render must deduct nothing.
+    """
+
+    def setUp(self):
+        self._app_dir = config.APP_DIR
+        self.dir = tempfile.mkdtemp(prefix="rm-stock-")
+        shutil.copy(os.path.join(PROJ, "appsettings.json"),
+                    os.path.join(self.dir, "appsettings.json"))
+        config.set_app_dir(self.dir)
+        pc.save(catalogue(
+            {"sku": "KB-87", "name": "Keyboard", "stock_count": 10},
+            {"sku": "MOU-1", "name": "Mouse", "stock_count": 3},
+            {"sku": "NOCOUNT", "name": "Never counted"}))
+
+    def tearDown(self):
+        config.set_app_dir(self._app_dir)
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def track(self, on=True):
+        config.update_app_settings({"inventory": {"track_stock": on}})
+
+    def stock(self):
+        return {p["sku"]: p.get("stock_count") for p in pc.load()["products"]}
+
+    # -- the delta calculation, in isolation --------------------------------
+    def test_a_first_sale_deducts_the_whole_quantity(self):
+        self.assertEqual(pc.stock_deltas([{"sku": "KB-87", "qty": 2}]), {"kb-87": 2})
+
+    def test_a_reissue_deducts_only_the_difference(self):
+        """Correcting a receipt must not deduct the same sale twice."""
+        self.assertEqual(
+            pc.stock_deltas([{"sku": "KB-87", "qty": 3}], [{"sku": "KB-87", "qty": 2}]),
+            {"kb-87": 1})
+
+    def test_reducing_a_quantity_returns_stock(self):
+        self.assertEqual(
+            pc.stock_deltas([{"sku": "KB-87", "qty": 1}], [{"sku": "KB-87", "qty": 3}]),
+            {"kb-87": -2})
+
+    def test_an_unchanged_reissue_moves_nothing(self):
+        self.assertEqual(
+            pc.stock_deltas([{"sku": "KB-87", "qty": 2}], [{"sku": "KB-87", "qty": 2}]), {})
+
+    def test_a_removed_line_gives_its_stock_back(self):
+        self.assertEqual(
+            pc.stock_deltas([], [{"sku": "MOU-1", "qty": 1}]), {"mou-1": -1})
+
+    def test_lines_without_a_sku_are_ignored(self):
+        self.assertEqual(pc.stock_deltas([{"desc": "Labour", "qty": 2}]), {})
+
+    def test_repeated_skus_on_one_receipt_are_summed(self):
+        self.assertEqual(
+            pc.stock_deltas([{"sku": "KB-87", "qty": 1}, {"sku": "KB-87", "qty": 2}]),
+            {"kb-87": 3})
+
+    # -- the end-to-end behaviour -------------------------------------------
+    def test_nothing_happens_while_tracking_is_off(self):
+        """Off by default: an uncounted catalogue must not go straight negative."""
+        self.assertFalse(config.load_app_settings()["inventory"]["track_stock"])
+        pc.record_sale("INV-W1", [{"sku": "KB-87", "qty": 2}])
+        self.assertEqual(self.stock()["KB-87"], 10)
+
+    def test_a_sale_deducts_when_tracking_is_on(self):
+        self.track()
+        pc.record_sale("INV-W1", [{"sku": "KB-87", "qty": 2}])
+        self.assertEqual(self.stock()["KB-87"], 8)
+
+    def test_a_reissue_adjusts_rather_than_deducting_again(self):
+        self.track()
+        pc.record_sale("INV-W1", [{"sku": "KB-87", "qty": 2}])
+        pc.record_sale("INV-W1", [{"sku": "KB-87", "qty": 3}],
+                       previous_items=[{"sku": "KB-87", "qty": 2}])
+        self.assertEqual(self.stock()["KB-87"], 7, "one more unit, not four")
+
+    def test_a_product_that_was_never_counted_is_left_alone(self):
+        self.track()
+        pc.record_sale("INV-W1", [{"sku": "NOCOUNT", "qty": 5}])
+        self.assertIsNone(self.stock()["NOCOUNT"],
+                          "inventing a count from a sale would be a guess")
+
+    def test_an_unknown_sku_changes_nothing(self):
+        self.track()
+        pc.record_sale("INV-W1", [{"sku": "NOT-STOCKED", "qty": 5}])
+        self.assertEqual(self.stock()["KB-87"], 10)
+
+    def test_overselling_is_recorded_and_the_receipt_still_stands(self):
+        """Blocking a sale over a possibly-stale count would be worse."""
+        self.track()
+        self.assertTrue(pc.record_sale("INV-W1", [{"sku": "MOU-1", "qty": 99}]))
+        self.assertEqual(self.stock()["MOU-1"], -96)
+
+    def test_a_negative_count_is_storable(self):
+        """The bug this exposed: validation refusing it meant the sale silently
+        failed to record, leaving stock wrong in the optimistic direction."""
+        pc.validate(catalogue({"sku": "X", "name": "X", "stock_count": -4}),
+                    "products.json")
+
+    def test_overselling_is_warned_about(self):
+        self.track()
+        with self.assertLogs("receipt_maker", level="WARNING") as captured:
+            pc.record_sale("INV-W1", [{"sku": "MOU-1", "qty": 99}])
+        joined = "\n".join(captured.output)
+        self.assertIn("MOU-1", joined)
+        self.assertIn("recount", joined)
+
+    def test_variants_are_deducted_too(self):
+        self.track()
+        pc.save(catalogue({"sku": "KB", "name": "Keyboard", "stock_count": 5,
+                           "variants": [{"sku": "KB-BLU", "stock_count": 2}]}))
+        pc.record_sale("INV-W1", [{"sku": "KB-BLU", "qty": 1}])
+        variant = pc.load()["products"][0]["variants"][0]
+        self.assertEqual(variant["stock_count"], 1)
+        self.assertEqual(pc.load()["products"][0]["stock_count"], 5,
+                         "the parent's own count is separate")
+
+    def test_recording_never_raises(self):
+        """Stock is a convenience; it must never be able to fail a receipt."""
+        self.track()
+        with open(pc.catalogue_path(), "w", encoding="utf-8") as f:
+            f.write("{ this catalogue is corrupt")
+        self.assertFalse(pc.record_sale("INV-W1", [{"sku": "KB-87", "qty": 1}]))
 
 
 class Storage(unittest.TestCase):

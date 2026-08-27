@@ -231,6 +231,19 @@ DEFAULT_APP_SETTINGS = {
     "terms_page": {
         "enabled": True,
     },
+    # Stock counting. Off by default: a catalogue whose stock has never been
+    # counted would go straight to negative numbers on the first sale, and a
+    # figure nobody trusts is worse than no figure.
+    #
+    # Note the policy is the OPPOSITE of invoice numbering, deliberately.
+    # Numbers are reserved *before* rendering and kept even on failure, because
+    # a duplicate number on a legal document is unrecoverable and a gap is
+    # merely untidy. Stock is committed *after* the receipt exists, because it
+    # should record that goods actually left -- a failed render means nothing
+    # left, so nothing should be deducted.
+    "inventory": {
+        "track_stock": False,
+    },
     # Policy pages linked from the receipt footer. Empty means "no link": the
     # wording still prints, it just is not a hyperlink, so a receipt never shows
     # a link to nowhere.
@@ -705,6 +718,12 @@ def validate(settings, filename=None):
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
         raise ConfigError(
             "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
+
+    inventory = settings.get("inventory")
+    if not isinstance(inventory, dict):
+        raise ConfigError("must be an object", filename, "inventory")
+    if not isinstance(inventory.get("track_stock", False), bool):
+        raise ConfigError("must be true or false", filename, "inventory.track_stock")
 
     links = settings.get("links")
     if not isinstance(links, dict):

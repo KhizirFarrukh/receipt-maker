@@ -95,6 +95,13 @@ SETTINGS_SECTIONS = [
         ("signing.location", "Location", "text", {}),
         ("signing.tsa_url", "Timestamp server", "text", {"help": "Optional. http:// or https://"}),
     ]),
+    ("Stock", [
+        ("inventory.track_stock", "Deduct stock when a receipt is generated", "bool",
+         {"help": "Off by default. Only turn this on once your product stock counts "
+                  "are actually correct — otherwise they go straight to negative. "
+                  "A failed receipt deducts nothing, and correcting a receipt "
+                  "adjusts by the difference rather than deducting twice."}),
+    ]),
     ("Interface", [
         ("ui.ask_open_folder", "Ask to open the folder after generating", "bool", {}),
         ("ui.open_folder_after_generate", "…and when not asking, open it anyway", "bool", {}),

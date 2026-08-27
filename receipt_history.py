@@ -117,6 +117,21 @@ def entries(newest_first=True):
     return list(reversed(found)) if newest_first else found
 
 
+def latest_for(invoice_no):
+    """The most recent record of one receipt, or None.
+
+    Used to work out what a reissue changed, so a corrected receipt adjusts
+    stock by the difference rather than deducting the whole sale twice.
+    """
+    wanted = str(invoice_no or "").strip().lower()
+    if not wanted:
+        return None
+    for entry in entries():                      # already newest-first
+        if str(entry.get("invoice_no", "")).strip().lower() == wanted:
+            return entry
+    return None
+
+
 def to_form_data(entry):
     """Turn a stored record back into the shape the form and renderer expect."""
     customer = entry.get("customer") or {}

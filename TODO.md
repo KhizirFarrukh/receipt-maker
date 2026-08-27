@@ -58,9 +58,16 @@ Pick a product instead of retyping its details on every receipt.
       path as the other editors: duplicate SKUs and barcodes are refused, because a scan has to
       identify exactly one product.
 - [ ] Import/export (CSV) for bulk editing.
-- [ ] **Stock is stored but not spent.** Nothing decrements on sale yet — see the open question
-      below, which is now concrete rather than hypothetical since reissuing from history exists.
+- [x] **Stock deduction — done, and settled the opposite way to invoice numbering.** Numbers are
+      reserved *before* rendering and kept on failure, because a duplicate is unrecoverable. Stock
+      is committed *after* the receipt exists, because it records that goods actually left — a
+      failed render deducts nothing. Reissuing adjusts by the difference rather than deducting
+      twice, and overselling is recorded (negative, with a warning) rather than refused, since
+      blocking a sale over a stale count is worse than showing a number that prompts a recount.
+      Off by default.
 - [ ] Serial-number selection: sell a *specific* held serial rather than typing one.
+- [ ] A low-stock warning at the point of sale, rather than only in the log.
+- [ ] Voiding a receipt should return its stock — there is no "void" concept yet.
 
 ### Decisions to settle before building
 
@@ -83,10 +90,11 @@ SQLite would win if this became multi-till or grew to tens of thousands of produ
 concurrent writers. It is worth revisiting then; the JSON shape maps onto tables cleanly enough
 that it would not be a rewrite.
 
-**Stock counting has the same trap as invoice numbers.** If generating a receipt decrements stock,
-then: what happens when generation fails after the decrement? When a receipt is deleted? When one
-is edited later from history? Invoice numbering settled this with *reserve-and-keep* plus a logged
-audit trail; stock needs its own explicit answer rather than inheriting one by accident.
+**Stock counting — settled.** It looked like the invoice-numbering problem but wanted the opposite
+answer, because the risk is different: a duplicate invoice number is unrecoverable, while a stock
+figure can always be recounted. So stock commits *after* the receipt exists rather than being
+reserved before it, a reissue adjusts by the difference, and overselling is recorded rather than
+refused. Voiding a receipt is still not modelled.
 
 **Serial numbers are a list, not a count.** Selling one unit should remove *that* serial from
 stock, which means the item dialog needs to offer the serials actually held.

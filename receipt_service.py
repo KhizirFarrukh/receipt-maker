@@ -23,6 +23,7 @@ from config import (
     load_app_settings,
     load_filename_fields,
 )
+import product_catalogue
 import receipt_history
 import receipt_render
 import receipt_signing
@@ -276,10 +277,17 @@ def generate(data, out_path, progress_cb=None):
                 pass
         raise
 
-    # Recorded after the file is safely in place, and never allowed to fail the
-    # receipt: the signed PDF is the legal artifact, a history line is a
-    # convenience. Done here rather than in the GUI so a headless run is recorded
-    # too.
+    # Both of these happen after the file is safely in place, and neither is
+    # allowed to fail the receipt: the signed PDF is the legal artifact.
+    #
+    # Stock first, and deliberately: it needs the *previous* version of this
+    # receipt to work out what changed, which means reading history before the
+    # new record is appended to it.
+    previous = receipt_history.latest_for(data.get("inv_no", ""))
+    product_catalogue.record_sale(
+        data.get("inv_no", ""), data.get("items"),
+        previous.get("items") if previous else None)
+
     receipt_history.record(data, out_path, signed)
 
     report(4, "Saved")

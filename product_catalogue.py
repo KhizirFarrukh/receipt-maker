@@ -181,6 +181,109 @@ def to_line_item(item, quantity=1, price_field="sell_price"):
     }
 
 
+# ------------------- stock -------------------
+def quantities_by_sku(items):
+    """Total quantity per SKU across a receipt's lines. Lines with no SKU are ignored."""
+    totals = {}
+    for item in items or []:
+        sku = str(item.get("sku", "") or "").strip()
+        if not sku:
+            continue                       # nothing to match against the catalogue
+        try:
+            quantity = int(str(item.get("qty", 0) or 0).strip() or 0)
+        except ValueError:
+            continue
+        totals[sku.lower()] = totals.get(sku.lower(), 0) + quantity
+    return totals
+
+
+def stock_deltas(new_items, previous_items=None):
+    """How much stock each SKU should lose for this generation.
+
+    The subtlety is reissuing. Correcting a receipt writes it again, and
+    deducting the full quantity a second time would double-count a sale that
+    only happened once. So the deduction is the *difference* from what that same
+    receipt previously took: change a line from 2 to 3 and one more unit leaves;
+    change it from 3 to 2 and one comes back.
+    """
+    new_totals = quantities_by_sku(new_items)
+    old_totals = quantities_by_sku(previous_items) if previous_items else {}
+    deltas = {}
+    for sku in set(new_totals) | set(old_totals):
+        delta = new_totals.get(sku, 0) - old_totals.get(sku, 0)
+        if delta:
+            deltas[sku] = delta
+    return deltas
+
+
+def apply_stock_deltas(catalogue, deltas):
+    """Subtract deltas from the matching products. Returns (catalogue, changed, shortfalls).
+
+    A count going negative is reported but never refused: the stock figure is
+    frequently a little stale, and blocking a sale at the till over a number that
+    might simply not have been counted would be far worse than recording it and
+    saying so.
+    """
+    if not deltas:
+        return catalogue, False, []
+
+    changed = False
+    shortfalls = []
+
+    def adjust(entry):
+        nonlocal changed
+        sku = str(entry.get("sku", "") or "").strip().lower()
+        if sku not in deltas:
+            return
+        current = entry.get("stock_count")
+        if not isinstance(current, int) or isinstance(current, bool):
+            return                          # never counted; leave it alone
+        updated = current - deltas[sku]
+        entry["stock_count"] = updated
+        changed = True
+        if updated < 0:
+            shortfalls.append((entry.get("sku", ""), updated))
+
+    for product in catalogue.get("products", []):
+        if not isinstance(product, dict):
+            continue
+        adjust(product)
+        for variant in product.get("variants") or []:
+            if isinstance(variant, dict):
+                adjust(variant)
+
+    return catalogue, changed, shortfalls
+
+
+def record_sale(receipt_no, items, previous_items=None, settings=None):
+    """Deduct a receipt's lines from stock. Never raises.
+
+    Called *after* the receipt exists, so a failed render deducts nothing. Does
+    nothing at all unless inventory.track_stock is on.
+    """
+    settings = settings if settings is not None else config.load_app_settings()
+    if not settings.get("inventory", {}).get("track_stock", False):
+        return False
+
+    try:
+        deltas = stock_deltas(items, previous_items)
+        if not deltas:
+            return False
+        catalogue = load()
+        catalogue, changed, shortfalls = apply_stock_deltas(catalogue, deltas)
+        if not changed:
+            return False
+        save(catalogue)
+        for sku, level in shortfalls:
+            logger.warning(
+                "Stock for %r is now %d after %s. The receipt was still issued -- "
+                "recount if that looks wrong.", sku, level, receipt_no)
+        return True
+    except Exception as exc:  # noqa: BLE001 - stock must never fail a receipt
+        logger.warning("Could not update stock for %s: %s", receipt_no, exc)
+        return False
+
+
 # ------------------- storage -------------------
 def default_catalogue():
     return json.loads(json.dumps(DEFAULT_CATALOGUE))
@@ -264,10 +367,14 @@ def validate(catalogue, filename=None):
 
         stock = entry.get("stock_count", 0)
         if stock not in ("", None):
-            if isinstance(stock, bool) or not isinstance(stock, int) or stock < 0:
+            # Negative is permitted on purpose. It is a real state -- oversold,
+            # or simply never counted accurately -- and refusing to store it
+            # would mean a sale that took stock below zero could not be recorded
+            # at all, leaving the figure wrong in the *optimistic* direction.
+            # Better to show -4 and prompt a recount than to show 3 and be wrong.
+            if isinstance(stock, bool) or not isinstance(stock, int):
                 raise config.ConfigError(
-                    "must be a whole number of units, zero or more",
-                    filename, f"{where}.stock_count")
+                    "must be a whole number of units", filename, f"{where}.stock_count")
 
         serials = entry.get("serial_numbers", [])
         if serials and (not isinstance(serials, list)

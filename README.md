@@ -79,9 +79,25 @@ in the description, SKU, barcode and price, and leaves anything you have already
 Prices fall back sell → list → bulk, so a product priced only one way still sells rather than
 landing on a receipt at zero.
 
-**Stock is recorded but not yet deducted when you sell.** That is deliberate rather than
-forgotten: deciding what happens when generation fails partway, or when you reissue an old receipt
-from history, needs the same care invoice numbering got, and is on the backlog.
+### Stock
+
+Stock counting is **off by default** — turn it on under **Tools → Settings → Stock**, once your
+counts are actually right. Switching it on with an uncounted catalogue would send every figure
+straight to negative, and a number nobody trusts is worse than no number.
+
+With it on:
+
+- **A failed receipt deducts nothing.** Stock records that goods left, so it is committed only
+  after the receipt exists. (This is the opposite of invoice numbering, which reserves a number
+  *before* rendering and keeps it even on failure — because a duplicate number is unrecoverable
+  while a gap is merely untidy. Different risks, different rules.)
+- **Correcting a receipt adjusts by the difference**, not the whole sale again. Change a line from
+  2 to 3 and one more unit leaves; change it to 1 and one comes back; remove the line and all of
+  it returns.
+- **Selling more than you have is recorded, not refused.** The count goes negative and a warning
+  names the product. Blocking a sale at the till over a figure that might simply be stale would be
+  far worse — and a negative number tells you plainly that a recount is due.
+- A product with **no count set** is left alone rather than having one invented from a sale.
 
 ## Receipt History
 
