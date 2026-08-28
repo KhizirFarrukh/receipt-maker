@@ -1,6 +1,15 @@
-> **Looking for what is still to do?** That lives in [`../TODO.md`](../TODO.md) — the durable
-> backlog. This file is the working checklist for work already in progress, kept mainly for the
-> reasoning behind decisions that have been made.
+> ## Historical record — not the entry point
+>
+> This is the working log of the 2026-08-22 → 2026-08-28 sessions, kept because the reasoning in it
+> is worth having. It is **not** where to start and **not** where the outstanding work lives.
+>
+> - Start at [`HANDOFF.md`](HANDOFF.md).
+> - What each module does: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+> - Why things are the way they are: [`DECISIONS.md`](DECISIONS.md).
+> - Traps that have already cost time: [`PITFALLS.md`](PITFALLS.md).
+> - What to do next: [`../TODO.md`](../TODO.md).
+>
+> Phases A–H below are all complete. Everything after them lives in TODO.md.
 
 # Working checklist — build/run verification + Stage 2
 

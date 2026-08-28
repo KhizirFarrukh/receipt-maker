@@ -1,3 +1,20 @@
+> ## ⚠ Historical plan — partly superseded
+>
+> This is the original approved architecture plan, kept for its reasoning. Stages 0–6 were built
+> from it and it is still the best explanation of *why* the app is shaped this way.
+>
+> **Two things in it are now wrong, on purpose:**
+>
+> 1. Its **Non-goals** list "a GUI settings editor (files-first is the decision)". That was
+>    reversed at the user's explicit request — the app now edits everything in-app. Do not read
+>    this section and remove the editors.
+> 2. It has no notion of a product catalogue, stock, barcodes or receipt history. Those were added
+>    later and are described in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+>
+> Stages 7 (diagnostics) and 8 (polish) are the only parts not yet built — see
+> [`../TODO.md`](../TODO.md). Where this file and [`DECISIONS.md`](DECISIONS.md) disagree,
+> DECISIONS.md wins.
+
 # Plan: Turn the receipt maker into a generic, template-driven app
 
 ## Context

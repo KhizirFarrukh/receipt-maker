@@ -2,6 +2,12 @@
 
 A Python tkinter desktop app for generating A4 PDF sales receipts.
 
+> **Working on the code?** Start at [`claude_chat/HANDOFF.md`](claude_chat/HANDOFF.md) — current
+> state, environment and how to verify a change. Then
+> [`ARCHITECTURE.md`](claude_chat/ARCHITECTURE.md),
+> [`DECISIONS.md`](claude_chat/DECISIONS.md) and
+> [`PITFALLS.md`](claude_chat/PITFALLS.md). Outstanding work is in [`TODO.md`](TODO.md).
+
 ## Features
 
 - Separate invoice number series for online (`INV-W####`) and in-store (`INV-S####`) purchases. The number is editable and defaults to one above the highest previously generated invoice in that series.

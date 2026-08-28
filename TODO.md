@@ -4,13 +4,17 @@ The durable record of what is still to do. Anything agreed but not built belongs
 survives between sessions.
 
 - **This file** = future work, in priority order.
-- [`claude_chat/TASKS.md`](claude_chat/TASKS.md) = the working checklist for whatever is currently
-  in progress, with the reasoning behind decisions already made.
-- [`claude_chat/PLAN-generalization.md`](claude_chat/PLAN-generalization.md) = the original
-  approved architecture plan. **Note it is now partly superseded** — its "no GUI settings editor"
-  non-goal was reversed by the in-app editing work.
+- [`claude_chat/HANDOFF.md`](claude_chat/HANDOFF.md) = **start here** — current state, environment,
+  how to verify anything.
+- [`claude_chat/ARCHITECTURE.md`](claude_chat/ARCHITECTURE.md) = modules, data files, invariants.
+- [`claude_chat/DECISIONS.md`](claude_chat/DECISIONS.md) = why things are the way they are. Read it
+  before changing something that looks odd.
+- [`claude_chat/PITFALLS.md`](claude_chat/PITFALLS.md) = traps that have already cost time.
+- [`claude_chat/TASKS.md`](claude_chat/TASKS.md) = historical session log.
+- [`claude_chat/PLAN-generalization.md`](claude_chat/PLAN-generalization.md) = the original plan,
+  **partly superseded**.
 
-Last updated: 2026-08-26.
+Last updated: 2026-08-28. 481 tests passing; golden gate green; packaged build verified.
 
 ---
 
