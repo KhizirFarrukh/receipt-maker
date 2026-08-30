@@ -111,7 +111,21 @@ Remove-Item -LiteralPath "tests\fixtures\env\Templates" -Recurse -Force -ErrorAc
 
 # 5. The packaged build (~4 min). Run it WITHOUT redirecting stderr — see PITFALLS.md.
 .\build_exe.ps1
+
+# 6. Coverage. .coveragerc sets fail_under = 80, so this exits non-zero below it.
+& $py -m pip install coverage      # once
+& $py -m coverage run -m unittest discover -s tests
+& $py -m coverage report           # add --sort=miss to see the worst offenders
+& $py -m coverage html             # browsable report in htmlcov/
 ```
+
+**698 tests, 88.0% coverage** at the time of writing, with a floor of 80% enforced by
+`.coveragerc`. Per-module, the lowest is `receipt_signing` at 81.4%; `keygen` and
+`verify_receipt` are at 100%. Branch coverage is on, so an untested `else` counts as a miss.
+
+What is deliberately *not* covered: the `if __name__ == "__main__"` blocks, `except ImportError`
+fallbacks for absent optional packages, and a handful of defensive `except OSError` paths that
+only fire on a failing disk. Those are listed in `.coveragerc`'s `exclude_lines`.
 
 The **golden gate** is the load-bearing check. `tests/fixtures/golden.html` is the receipt HTML
 rendered from a pinned fixture, compared byte for byte. It stayed identical through Stages 2–5 and

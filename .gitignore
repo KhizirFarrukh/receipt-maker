@@ -279,3 +279,7 @@ invoices/.archive/
 # The product catalogue is the user's own data, not source.
 products.json
 tests/fixtures/env/products.json
+
+# Coverage output
+htmlcov/
+.coverage

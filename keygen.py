@@ -63,8 +63,16 @@ def main(argv=None):
     org_name = (org_name or "").strip()
     common_name = args.common_name or (f"{org_name} Receipt Signing" if org_name else None)
 
+    # Write where the *app* will look, not where receipt_signing happens to
+    # default. Those differ as soon as anyone sets a custom signing path, and a
+    # key created somewhere the app never reads is silently useless.
+    import receipt_service
+
+    key_path, cert_path = receipt_service.signing_key_paths()
+
     try:
         key_path, cert_path = receipt_signing.generate_key_pair(
+            key_path, cert_path,
             force=args.force, passphrase=args.passphrase,
             common_name=common_name, org_name=org_name,
         )

@@ -92,6 +92,28 @@ or the filesystem inside it — inject those from `build_html`.
 11. **`row_to_item` / `item_to_row` in `main.py` are the only place** the item tree's positional
     storage maps to field keys. Drift there silently puts values in the wrong column.
 
+## The test suite
+
+**698 tests, 88.0% coverage**, floor enforced at 80% by `.coveragerc`. Branch coverage is on.
+
+| File | Covers |
+|---|---|
+| `test_stage0.py` | The golden gate: determinism, regression, GUI fidelity, layering |
+| `test_template_engine.py` | Escaping, conditionals, dotted keys, malformed templates, linting |
+| `test_config.py` | Deep-merge, migration, validation, atomic writes, conflicts |
+| `test_stage2.py` … `test_stage5.py` | One per delivery stage; the invariants each introduced |
+| `test_signing.py` | Key import matrix, certificate inspection, **key rotation** |
+| `test_receipt_service.py` | Generation orchestration and its failure paths |
+| `test_history.py`, `test_products.py` | Receipt history; catalogue, variants, pricing |
+| `test_cli.py` | `cli.py`, `keygen.py`, `verify_receipt.py` — exit codes are the contract |
+| `test_gui_dialogs.py`, `test_gui_main.py`, `test_gui_internals.py` | The GUI, driven headlessly |
+| `test_regressions.py` | One test per bug found, saying what it protects |
+| `gate_env.py` | Shared setup that pins tests to the fixture config |
+
+Two rules when adding tests, both learned the hard way (see PITFALLS.md): **stub every modal
+dialog** — an unstubbed one hangs the suite rather than failing it — and **never assert on a CSS
+class name**, because `styles.css` is embedded in the rendered HTML.
+
 ## Config schema versions
 
 `appsettings.json` is at **v4**. Migration runs on load, is persisted once, and keeps a `.bak`.

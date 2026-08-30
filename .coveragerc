@@ -1,0 +1,22 @@
+[run]
+branch = True
+source = .
+omit =
+    tests/*
+    build/*
+    dist/*
+    receipt_maker.spec
+    .coveragerc
+
+[report]
+# Show which lines are missed, and fail the run below the agreed floor.
+show_missing = True
+skip_covered = False
+precision = 1
+fail_under = 80
+exclude_lines =
+    pragma: no cover
+    # Defensive branches that only fire on a broken environment.
+    if __name__ == .__main__.:
+    raise AssertionError
+    except ImportError
