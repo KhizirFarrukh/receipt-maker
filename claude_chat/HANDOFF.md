@@ -161,11 +161,19 @@ has been regenerated exactly **once**, deliberately, when receipt-field styling 
 
 ## What to do next
 
-See [`../TODO.md`](../TODO.md). In rough order of value:
+See [`../TODO.md`](../TODO.md). **TODO.md §6 is the newest batch** — ten requests agreed on
+2026-08-31 covering per-unit serial numbers, installment plans, a real per-line total, and receipt
+row layout. Nothing in it is started. In rough order of value:
 
-1. Margin/markup/discount **UI** — the arithmetic and its tests are already done in
+1. **A real per-line total** (TODO §6.4). The smallest of the §6 batch and the one that unblocks
+   the rest: `receipt_render.py:875` currently computes a line as `qty × price`, so a line with a
+   discount or tax shows a figure that is not what that line came to. Two open questions in §6.5
+   and §6.7 want the user's answer before their features are built — read those before starting.
+2. Margin/markup/discount **UI** — the arithmetic and its tests are already done in
    `product_catalogue.py`; it needs a mode picker in the product editor.
-2. **Voiding a receipt** — the clearest gap the stock work opened. There is no void concept, so a
+3. **Voiding a receipt** — the clearest gap the stock work opened. There is no void concept, so a
    cancelled sale does not return its stock.
-3. Serial-number selection (sell a *specific* held serial).
 4. CSV import/export, save-draft, image signature, `--doctor`.
+
+Serial-number selection was item 3 here; it is now folded into §6.1, which supersedes it — a line
+of qty 3 needs *three* serials, not one.
