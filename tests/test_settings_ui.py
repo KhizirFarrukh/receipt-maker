@@ -196,8 +196,10 @@ class FieldsEditor(EditorTestCase):
         dialog.receipt_editor.records.append(
             {"key": "po_number", "label": "PO Number", "type": "text", "enabled": True})
         dialog.save()
+        # `notes` ships as a built-in receipt field (disabled), so the added
+        # one lands after it rather than being the only entry.
         self.assertEqual([f["key"] for f in self.saved_fields()["receipt_fields"]],
-                         ["po_number"])
+                         ["notes", "po_number"])
 
     def test_editing_warranty_options(self):
         dialog = settings_ui.FieldsDialog(self.root)

@@ -97,6 +97,14 @@
     table.items td.item-units {
         white-space: pre-line;
     }
+    /* A multi-line receipt field -- order notes -- is a paragraph, so it keeps
+       its line breaks and wraps rather than running off the box. Unlike a
+       product line it *may* break across pages: it is prose, and forcing a long
+       note onto one page would push it past the end of the paper. */
+    .receipt-field.field-lines {
+        white-space: pre-line;
+        word-break: break-word;
+    }
     .totals-table {
         width: 50%;
         margin-left: 50%;

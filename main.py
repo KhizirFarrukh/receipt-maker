@@ -263,10 +263,38 @@ class ReceiptApp:
                                         sticky=tk.W)
         ttk.Entry(main_frame, textvariable=self.shipping, width=15).grid(row=2, column=4, padx=5, pady=2, sticky=tk.W)
 
+        # Receipt-level custom fields, built from fields.json rather than
+        # hardcoded -- until now the item dialog was configurable and the form
+        # above it was not, so a receipt-level field could be printed but never
+        # typed in. A `multiline` field (order notes) gets a real text box;
+        # everything else follows its type like the item dialog does.
+        self.receipt_field_vars = {}
+        self.receipt_field_texts = {}
+        next_form_row = 3
+        for field in self.receipt_fields():
+            label = field.get("label", field["key"])
+            if field.get("required"):
+                label += " *"
+            ttk.Label(main_frame, text=label).grid(
+                row=next_form_row, column=0, sticky=tk.NW, padx=5, pady=2)
+            if field.get("type") == "multiline":
+                box = tk.Text(main_frame, height=3, wrap=tk.WORD)
+                box.grid(row=next_form_row, column=1, columnspan=5,
+                         sticky=tk.EW, padx=5, pady=2)
+                self.receipt_field_texts[field["key"]] = box
+            else:
+                var = tk.StringVar()
+                widget = self._build_receipt_widget(main_frame, field, var)
+                widget.grid(row=next_form_row, column=1, columnspan=2,
+                            sticky=tk.W, padx=5, pady=2)
+                self.receipt_field_vars[field["key"]] = var
+            next_form_row += 1
+
         # --- items frame ---
         items_frame = ttk.LabelFrame(main_frame, text="Items", padding=5)
-        items_frame.grid(row=3, column=0, columnspan=6, sticky=tk.NSEW, padx=5, pady=10)
-        main_frame.rowconfigure(3, weight=1)
+        items_frame.grid(row=next_form_row, column=0, columnspan=6,
+                         sticky=tk.NSEW, padx=5, pady=10)
+        main_frame.rowconfigure(next_form_row, weight=1)
         for col in range(6):
             main_frame.columnconfigure(col, weight=1)
 
@@ -1385,6 +1413,47 @@ class ReceiptApp:
         keys.append("installment")
         return keys
 
+    def receipt_fields(self):
+        """The receipt-level fields to show on the form, in configured order.
+
+        Only enabled ones: unlike a line-item field -- where `enabled` controls
+        printing and a hidden built-in still has to be typed in for the totals
+        to work -- nothing here feeds a calculation, so hiding one means the
+        shop does not use it.
+        """
+        return [f for f in self.fields.get("receipt_fields", [])
+                if isinstance(f, dict) and f.get("enabled", True)]
+
+    def _build_receipt_widget(self, parent, field, var):
+        """One input for a receipt-level field, following its declared type."""
+        field_type = field.get("type", "text")
+        if field_type == "select":
+            options = [str(o) for o in field.get("options", [])]
+            return ttk.Combobox(parent, textvariable=var, values=options,
+                                state="readonly", width=28)
+        if field_type == "boolean":
+            return ttk.Checkbutton(parent, variable=var, onvalue="true",
+                                   offvalue="")
+        return ttk.Entry(parent, textvariable=var, width=30)
+
+    def receipt_field_values(self):
+        """What was typed into the receipt-level fields, keyed by field key."""
+        values = {key: var.get() for key, var in self.receipt_field_vars.items()}
+        for key, box in self.receipt_field_texts.items():
+            # Tk appends a newline of its own to every Text widget; stripping it
+            # stops an untouched box counting as a value and printing an empty
+            # block on the receipt.
+            values[key] = box.get("1.0", tk.END).strip()
+        return values
+
+    def set_receipt_field_values(self, source):
+        """Fill the receipt-level fields from a stored receipt."""
+        for key, var in self.receipt_field_vars.items():
+            var.set(str(source.get(key, "") or ""))
+        for key, box in self.receipt_field_texts.items():
+            box.delete("1.0", tk.END)
+            box.insert("1.0", str(source.get(key, "") or ""))
+
     def item_at(self, row_id):
         """Read one item row as a dict, without Tk mangling the values.
 
@@ -1660,6 +1729,10 @@ class ReceiptApp:
         if self.payment_method.get().strip():
             data["payment_method"] = self.payment_method.get().strip()
 
+        for key, value in self.receipt_field_values().items():
+            if str(value).strip():
+                data[key] = value
+
         try:
             import shipments
             shipments.validate(data, items)
@@ -1896,6 +1969,7 @@ class ReceiptApp:
         self.order_plan = data.get("installment") or {}
         self.shipment_fees = data.get("shipments") or []
         self.payment_method.set(data.get("payment_method", "") or "")
+        self.set_receipt_field_values(data)
         self.refresh_order_plan_label()
         for child in self.items_tree.get_children():
             self.items_tree.delete(child)

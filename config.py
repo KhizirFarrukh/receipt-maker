@@ -340,14 +340,22 @@ RESERVED_FIELD_KEYS = frozenset({
 #: get it too. The lists are replaced wholesale on load rather than merged (their
 #: order is the column order), so without a migration a new built-in would only
 #: ever reach brand-new installs.
-FIELDS_SCHEMA_VERSION = 5
+FIELDS_SCHEMA_VERSION = 6
 
 DEFAULT_FIELDS = {
     SCHEMA_VERSION_KEY: FIELDS_SCHEMA_VERSION,
     # Extra receipt-level fields, printed under the Bill To box. Empty by
     # default -- customer name, phone and email are built in. Add entries here
     # for things like a PO number, a salesperson, or a vehicle registration.
-    "receipt_fields": [],
+    # Receipt-level fields, printed under the Bill To box. `notes` ships here
+    # disabled: a paragraph about the order (delivery instructions, what was
+    # agreed on the phone) has nowhere else to go, but turning it on by default
+    # would add an empty block to every receipt. Enable it under Tools ->
+    # Fields & Columns, where any other receipt-level field is added too.
+    "receipt_fields": [
+        {"key": "notes", "label": "Order Notes", "type": "multiline",
+         "enabled": False},
+    ],
     "line_item_fields": [
         {"key": "sku", "label": "SKU", "type": "text", "enabled": True},
         # A *product* barcode (EAN/UPC/GTIN): every unit of the product carries
@@ -1166,6 +1174,18 @@ def migrate_fields(fields, version):
             defaults = {f["key"]: f for f in DEFAULT_FIELDS["line_item_fields"]}
             items = fields.setdefault("line_item_fields", [])
             items.append(dict(defaults["shipment"]))
+            changed = True
+
+    if version < 6:
+        # v6 introduced order notes: a receipt-level paragraph. Added disabled,
+        # so no existing receipt grows an empty block.
+        receipt_fields = fields.setdefault("receipt_fields", [])
+        present_receipt = {f.get("key") for f in receipt_fields
+                           if isinstance(f, dict)}
+        if "notes" not in present_receipt:
+            default = next(f for f in DEFAULT_FIELDS["receipt_fields"]
+                           if f["key"] == "notes")
+            receipt_fields.append(dict(default))
             changed = True
 
     if fields.get(SCHEMA_VERSION_KEY) != FIELDS_SCHEMA_VERSION:

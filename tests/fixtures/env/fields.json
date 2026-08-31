@@ -1,6 +1,13 @@
 {
-  "schema_version": 5,
-  "receipt_fields": [],
+  "schema_version": 6,
+  "receipt_fields": [
+    {
+      "key": "notes",
+      "label": "Order Notes",
+      "type": "multiline",
+      "enabled": false
+    }
+  ],
   "line_item_fields": [
     {
       "key": "sku",

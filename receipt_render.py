@@ -517,7 +517,7 @@ BLOCK_CONTEXTS = {
     "receipt_info.html": {"type_badge", "invoice_no", "date", "customer_name",
                           "customer_phone", "customer_email",
                           "custom_receipt_fields"},
-    "field_row.html": {"label", "value"},
+    "field_row.html": {"label", "value", "value_class"},
     "items_table.html": {"header_cells", "rows"},
     "item_header_cell.html": {"label", "css_class"},
     "item_row_cell.html": {"value", "css_class", "note"},
@@ -782,6 +782,10 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
             _block(templates, "field_row.html", {
                 "label": field.get("label", field["key"]),
                 "value": _receipt_field_value(data, field, currency, strings),
+                # A paragraph field keeps its line breaks; everything else is
+                # one line and needs no class of its own.
+                "value_class": ("field-lines"
+                                if field.get("type") == "multiline" else ""),
             })
             for field in fields.get("receipt_fields", [])
             if field.get("enabled", True)
