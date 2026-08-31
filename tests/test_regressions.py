@@ -253,5 +253,71 @@ class WindowsLockContention(unittest.TestCase):
         self.assertIn("No space", str(ctx.exception))
 
 
+class TreeviewEatsLeadingZeros(unittest.TestCase):
+    """`tree.item(row)["values"]` runs every cell through Tcl type guessing.
+
+    A UPC of "0000000000000" came back as the integer 0 and a serial of "007"
+    as 7. Leading zeros are ordinary on barcodes -- UPC-A codes routinely start
+    with one -- so this was silent data loss on a document that gets signed and
+    handed to a customer. Found while building barcode scanning: a rescan could
+    not find the line it had just added, because the code stored was not the
+    code scanned.
+
+    `tree.set(row)` returns the strings as stored, which is what item_at uses.
+    """
+
+    def setUp(self):
+        import tkinter as tk
+        self._app_dir = config.APP_DIR
+        self.dir = tempfile.mkdtemp(prefix="rm-regress-zeros-")
+        os.makedirs(os.path.join(self.dir, "invoices"), exist_ok=True)
+        config.set_app_dir(self.dir)
+        self.root = tk.Tk()
+        self.root.withdraw()
+        import main
+        self.app = main.ReceiptApp(self.root)
+
+    def tearDown(self):
+        self.root.destroy()
+        config.set_app_dir(self._app_dir)
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def add(self, **kw):
+        import tkinter as tk
+        item = {"sku": "A", "desc": "Thing", "serial": "", "qty": "1",
+                "price": "1", "discount": "0", "tax": "0", "warranty": ""}
+        item.update(kw)
+        row = self.app.items_tree.insert("", tk.END,
+                                         values=self.app.item_to_row(item))
+        return row
+
+    def test_a_barcode_keeps_its_leading_zeros(self):
+        row = self.add(sku="0000000000000")
+        self.assertEqual(self.app.item_at(row)["sku"], "0000000000000")
+
+    def test_a_short_serial_keeps_its_leading_zeros(self):
+        row = self.add(serial="007")
+        self.assertEqual(self.app.item_at(row)["serial"], "007")
+
+    def test_the_old_accessor_still_demonstrates_the_bug(self):
+        """Guards the fix: if this ever stops mangling, the workaround can go."""
+        row = self.add(sku="0000000000000")
+        raw = self.app.items_tree.item(row)["values"]
+        self.assertIn(0, raw, "Tk no longer coerces; item_at may be simplifiable")
+
+    def test_values_come_back_as_text(self):
+        row = self.add(qty="2")
+        self.assertIsInstance(self.app.item_at(row)["qty"], str)
+
+    def test_a_decimal_price_is_not_turned_into_a_float(self):
+        row = self.add(price="10.50")
+        self.assertEqual(self.app.item_at(row)["price"], "10.50")
+
+    def test_a_price_with_a_trailing_zero_keeps_it(self):
+        """"10.00" becoming 10.0 would change what prints on the receipt."""
+        row = self.add(price="10.00")
+        self.assertEqual(self.app.item_at(row)["price"], "10.00")
+
+
 if __name__ == "__main__":
     unittest.main()

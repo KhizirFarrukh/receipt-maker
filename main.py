@@ -277,6 +277,17 @@ class ReceiptApp:
         ttk.Button(toolbar, text="Edit Selected", command=self.edit_item).pack(side=tk.LEFT, padx=5)
         ttk.Button(toolbar, text="Shipping per shipment…",
                    command=self.edit_shipments).pack(side=tk.LEFT, padx=5)
+
+        # Scan straight into the list. A scanner types the code and presses
+        # Enter, so the box needs no button -- and Enter must never reach the
+        # form's default action, or the first scan would submit the receipt.
+        ttk.Label(toolbar, text="Scan:").pack(side=tk.LEFT, padx=(16, 2))
+        self.scan_code = tk.StringVar()
+        scan_entry = ttk.Entry(toolbar, textvariable=self.scan_code, width=18)
+        scan_entry.pack(side=tk.LEFT)
+        scan_entry.bind("<Return>", self.on_scan)
+        self.scan_status = ttk.Label(toolbar, text="", foreground="#64748b")
+        self.scan_status.pack(side=tk.LEFT, padx=(6, 0))
         # A plan for the whole order. Only built when plans are switched on, so
         # a shop that never finances anything never sees the button.
         self.order_plan_button = None
@@ -812,7 +823,7 @@ class ReceiptApp:
 
         # pre-fill the fields when editing an existing row
         if editing:
-            existing = self.row_to_item(self.items_tree.item(item_id)["values"])
+            existing = self.item_at(item_id)
             for field in labels:
                 value = existing.get(field["key"], "")
                 var = vars_[field["key"]]
@@ -978,10 +989,130 @@ class ReceiptApp:
         parent.wait_window(win)
         return result["units"]
 
+    def codes_for(self, code):
+        """Every code that identifies the same product as `code`.
+
+        A scan has to find the line it already added, and the line may not have
+        stored the code that was scanned: `barcode` ships as a disabled column,
+        so a line added by scanning a barcode holds only the SKU. Resolving
+        through the catalogue first means either code finds the same line.
+        """
+        codes = {str(code or "").strip().casefold()}
+        try:
+            import product_catalogue
+            product = product_catalogue.find(product_catalogue.load(), code)
+        except Exception:                        # noqa: BLE001 - never block a sale
+            product = None
+        if product:
+            for key in ("sku", "barcode"):
+                value = str(product.get(key, "") or "").strip().casefold()
+                if value:
+                    codes.add(value)
+        return {c for c in codes if c}
+
+    def find_row_by_code(self, code):
+        """The first item row that is the same product as `code`, or None."""
+        wanted = self.codes_for(code)
+        if not wanted:
+            return None
+        for row in self.items_tree.get_children():
+            item = self.item_at(row)
+            for key in ("barcode", "sku"):
+                value = str(item.get(key, "")).strip().casefold()
+                if value and value in wanted:
+                    return row
+        return None
+
+    def on_scan(self, event=None):
+        """Add a line for a scanned code, or add one to the line already there.
+
+        Returns "break" so Enter never propagates: a scanner ends every read
+        with it, and letting it through would fire the window's default action
+        on the first item scanned.
+        """
+        code = self.scan_code.get().strip()
+        self.scan_code.set("")
+        if not code:
+            return "break"
+
+        existing = self.find_row_by_code(code)
+        if existing is not None:
+            item = self.item_at(existing)
+            try:
+                quantity = int(str(item.get("qty", "1")).strip() or 1)
+            except ValueError:
+                quantity = 1
+            item["qty"] = str(quantity + 1)
+            # The unit list is sized by the quantity, so scanning a third one
+            # means a third serial is now owed. normalise() pads it here rather
+            # than leaving the line quietly short.
+            unit_keys = line_units.per_unit_keys(self.fields)
+            if unit_keys:
+                line_units.set_units(
+                    item, line_units.normalise(item, unit_keys))
+            self.items_tree.item(existing, values=self.item_to_row(item))
+            self.items_tree.selection_set(existing)
+            self.items_tree.see(existing)
+            self.set_scan_status(f"{item.get('desc') or code} × {item['qty']}")
+            return "break"
+
+        self.add_scanned_product(code)
+        return "break"
+
+    def add_scanned_product(self, code):
+        """Insert a new line for `code`, asking what to do if it is unknown."""
+        import product_catalogue
+
+        try:
+            product = product_catalogue.find(product_catalogue.load(), code)
+        except Exception:                        # noqa: BLE001 - never block a sale
+            product = None
+
+        if product is None:
+            # A scan that does nothing looks like a broken scanner, so say what
+            # happened and offer the two useful answers.
+            add_blank = messagebox.askyesno(
+                "Not in the catalogue",
+                f"Nothing in the product catalogue has the code {code!r}.\n\n"
+                "Yes  -  add a line with this code, to fill in by hand\n"
+                "No  -  do nothing (then add it under Tools → Products)",
+                parent=self.root)
+            if not add_blank:
+                self.set_scan_status(f"{code}: not found", warn=True)
+                return
+            # Store the code where the form can actually keep it. `barcode`
+            # is a disabled column by default, so a line written only to
+            # `barcode` would lose the code and could never be rescanned.
+            entry_keys = {field["key"] for field in self.input_fields}
+            code_key = "barcode" if "barcode" in entry_keys else "sku"
+            line = {code_key: code, "qty": "1"}
+        else:
+            line = product_catalogue.to_line_item(product)
+            line["qty"] = "1"
+
+        item = {field["key"]: line.get(field["key"], "")
+                for field in self.input_fields}
+        item.update({k: v for k, v in line.items() if k in item})
+        item["qty"] = "1"
+        if self.warranty_enabled:
+            item.setdefault("warranty", "")
+
+        self.items_tree.insert("", tk.END, values=self.item_to_row(item))
+        rows = self.items_tree.get_children()
+        self.items_tree.selection_set(rows[-1])
+        self.items_tree.see(rows[-1])
+        self.set_scan_status(f"{item.get('desc') or code} added")
+
+    def set_scan_status(self, text, warn=False):
+        if getattr(self, "scan_status", None) is None:
+            return
+        self.scan_status.config(text=text,
+                                foreground="#b45309" if warn else "#166534")
+
     def shipment_tags_used(self):
         """Shipment tags present on the item rows, in first-mention order."""
         import shipments
-        items = [self.row_to_item(self.items_tree.item(row)["values"])
+        items = [self.item_at(row)
                  for row in self.items_tree.get_children()]
         return shipments.groups_used(items)
 
@@ -1067,7 +1198,7 @@ class ReceiptApp:
         """How many item rows carry their own instalment plan."""
         count = 0
         for row in self.items_tree.get_children():
-            item = self.row_to_item(self.items_tree.item(row)["values"])
+            item = self.item_at(row)
             if item.get("installment"):
                 count += 1
         return count
@@ -1254,6 +1385,18 @@ class ReceiptApp:
         keys.append("installment")
         return keys
 
+    def item_at(self, row_id):
+        """Read one item row as a dict, without Tk mangling the values.
+
+        `tree.item(row)["values"]` runs every cell through Tcl's type guessing,
+        which turns a UPC of "0000000000000" into the integer 0 and a serial of
+        "007" into 7. Leading zeros are common on barcodes, so that is silent
+        data loss on a legal document. `tree.set(row)` returns the strings as
+        stored, which is what this uses.
+        """
+        cells = self.items_tree.set(row_id)
+        return self.row_to_item([cells.get(key, "") for key in self.tree_keys()])
+
     def row_to_item(self, values):
         """Tree row (a positional tuple) -> a dict keyed by field key.
 
@@ -1264,7 +1407,9 @@ class ReceiptApp:
         """
         item = {}
         for key, value in zip(self.tree_keys(), list(values)):
-            item[key] = "" if value is None else value
+            # Text, always: a value that arrived as a number (Tk's doing, or a
+            # caller's) must not reach the renderer as one, or "007" prints as 7.
+            item[key] = "" if value is None else str(value)
 
         # Units are the one non-string value on a row. The tree can only hold
         # text, so they travel as JSON and are parsed back here -- in the same
@@ -1464,7 +1609,7 @@ class ReceiptApp:
 
         items = []
         for child in self.items_tree.get_children():
-            item = self.row_to_item(self.items_tree.item(child)["values"])
+            item = self.item_at(child)
             # Numeric fields are stored as text in the tree; convert them back so
             # the renderer receives numbers, and say which item is wrong if one
             # cannot be read rather than failing anonymously.

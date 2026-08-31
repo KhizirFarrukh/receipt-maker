@@ -362,13 +362,13 @@ class TheFormCarriesPlans(unittest.TestCase):
         plan = {"months": 6, "down": "5000", "monthly": "3000"}
         self.add_row(installment=plan)
         row = self.app.items_tree.get_children()[0]
-        back = self.app.row_to_item(self.app.items_tree.item(row)["values"])
+        back = self.app.item_at(row)
         self.assertEqual(back["installment"], plan)
 
     def test_a_line_without_a_plan_gains_no_empty_key(self):
         self.add_row()
         row = self.app.items_tree.get_children()[0]
-        back = self.app.row_to_item(self.app.items_tree.item(row)["values"])
+        back = self.app.item_at(row)
         self.assertNotIn("installment", back)
 
     def test_lines_with_plans_are_counted(self):
@@ -396,7 +396,7 @@ class TheFormCarriesPlans(unittest.TestCase):
         self.add_row(units=[{"serial": "SN1"}],
                      installment={"months": 3, "monthly": "10"})
         row = self.app.items_tree.get_children()[0]
-        back = self.app.row_to_item(self.app.items_tree.item(row)["values"])
+        back = self.app.item_at(row)
         self.assertEqual(back["units"], [{"serial": "SN1"}])
         self.assertEqual(back["installment"]["months"], 3)
 
@@ -408,7 +408,7 @@ class TheFormCarriesPlans(unittest.TestCase):
         values[keys.index("desc")] = "Thing"
         self.app.items_tree.insert("", tk.END, values=values)
         row = self.app.items_tree.get_children()[0]
-        back = self.app.row_to_item(self.app.items_tree.item(row)["values"])
+        back = self.app.item_at(row)
         self.assertEqual(back["desc"], "Thing")
         self.assertNotIn("installment", back)
 

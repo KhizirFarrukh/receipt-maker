@@ -385,7 +385,12 @@ class TreeRowRoundTrip(unittest.TestCase):
             item = {"sku": "A", "desc": "D", "serial": "S", "qty": 2,
                     "price": "1.00", "discount": "0.00", "tax": "0.00",
                     "warranty": "No Warranty"}
-            self.assertEqual(app.row_to_item(app.item_to_row(item)), item)
+            # The row comes back as text, because the tree stores text. A value
+            # that arrived as a number must not reach the renderer as one --
+            # Tk's own type guessing turns "007" into 7 and "10.00" into 10.0,
+            # so everything read from a row is normalised to str.
+            expected = {k: str(v) for k, v in item.items()}
+            self.assertEqual(app.row_to_item(app.item_to_row(item)), expected)
         finally:
             root.destroy()
 
