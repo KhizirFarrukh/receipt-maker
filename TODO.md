@@ -62,7 +62,12 @@ Pick a product instead of retyping its details on every receipt.
 - [x] Manage the catalogue in-app (**Tools → Products**), with the same validate-then-atomic-write
       path as the other editors: duplicate SKUs and barcodes are refused, because a scan has to
       identify exactly one product.
-- [ ] Import/export (CSV) for bulk editing.
+- [x] **Import/export (CSV) — DONE.** Tools → Products → Import/Export CSV. Variants become
+      their own rows carrying a `parent_sku` and serial numbers share a `;`-joined cell, a
+      flattening that undoes exactly — which is what makes import safe. Import **merges by
+      SKU** by default and says so in the prompt: a CSV is usually a partial list (this week's
+      stock, a supplier's price update) and replacing wholesale would delete everything not in
+      it. Written with a UTF-8 BOM, or Excel mangles every accented name.
 - [x] **Stock deduction — done, and settled the opposite way to invoice numbering.** Numbers are
       reserved *before* rendering and kept on failure, because a duplicate is unrecoverable. Stock
       is committed *after* the receipt exists, because it records that goods actually left — a
@@ -141,8 +146,11 @@ pricing mistake — so the UI must name which one it is using:
       correct and reissue. Stored as one JSON object per line in
       `invoices/.archive/history.jsonl`. The record outlives its PDF, and a reloaded receipt keeps
       its original number so correcting one consumes no new number.
-      - [ ] *Still open:* a CSV **export** for spreadsheet use — easy on top of the JSON, and the
-            right way round (JSON as the source of truth, CSV as a view).
+      - [x] *CSV export — DONE.* Tools → Receipt History → Export CSV, one row per line item,
+            which is the shape worth pivoting on. **Export only, deliberately:** the history is an
+            append-only record of what happened, and reassembling receipts from spreadsheet rows
+            would mean inventing a rule for it. A search narrows the export, so a quarter's sales
+            is a search away.
 - [ ] **H2 — save draft.** Store an in-progress receipt and restore it later. Consumes no invoice
       number.
 - [ ] **H6 (remainder) — image signature.** A scanned signature image on the receipt. **It is

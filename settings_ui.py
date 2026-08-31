@@ -825,6 +825,8 @@ class HistoryDialog:
         ttk.Button(buttons, text="Load into form", command=self.load).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Open PDF", command=self.open_pdf).pack(side=tk.LEFT, padx=6)
         ttk.Button(buttons, text="Void…", command=self.void).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Export CSV…",
+                   command=self.export_csv).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(buttons, text="Close", command=self.win.destroy).pack(side=tk.LEFT)
 
         self.refresh()
@@ -869,6 +871,32 @@ class HistoryDialog:
         if self.on_load:
             self.on_load(entry)
         self.win.destroy()
+
+    def export_csv(self):
+        """Write the history out for a spreadsheet, one row per line item.
+
+        Export only. Reassembling receipts from spreadsheet rows would mean
+        inventing a rule for it, and this file is an append-only record of what
+        happened -- editing it elsewhere and pushing it back is the one thing it
+        must not allow.
+        """
+        import csv_io
+
+        path = filedialog.asksaveasfilename(
+            parent=self.win, title="Export receipt history",
+            defaultextension=".csv", initialfile="receipts.csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            currency = config.load_app_settings().get("currency")
+            # What is listed, so a search narrows the export too.
+            written = csv_io.export_history(path, self.entries, currency)
+        except Exception as exc:                 # noqa: BLE001 - reported
+            messagebox.showerror("Could not export", str(exc), parent=self.win)
+            return
+        messagebox.showinfo(
+            "Exported", f"{written} row(s) written to\n{path}", parent=self.win)
 
     def void(self):
         """Cancel a receipt: mark it void and put its stock back.
@@ -1109,6 +1137,10 @@ class ProductsDialog:
         tools.pack(fill=tk.X, pady=(6, 0))
         ttk.Button(tools, text="Work out a sell price…",
                    command=self.open_pricing).pack(side=tk.LEFT)
+        ttk.Button(tools, text="Import CSV…",
+                   command=self.import_csv).pack(side=tk.LEFT, padx=(12, 4))
+        ttk.Button(tools, text="Export CSV…",
+                   command=self.export_csv).pack(side=tk.LEFT)
         ttk.Label(tools, foreground="#64748b",
                   text="from cost or list price, by markup, margin or discount"
                   ).pack(side=tk.LEFT, padx=(8, 0))
@@ -1120,6 +1152,62 @@ class ProductsDialog:
         ttk.Button(footer, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
         ttk.Button(footer, text="Save", command=self.save).pack(side=tk.RIGHT, padx=6)
         self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+
+    def export_csv(self):
+        """Write the catalogue out for a spreadsheet."""
+        import csv_io
+
+        path = filedialog.asksaveasfilename(
+            parent=self.win, title="Export products",
+            defaultextension=".csv", initialfile="products.csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            # Export what is on screen, not what is on disk: someone who has
+            # just edited a row expects the export to contain the edit.
+            catalogue = dict(self.catalogue)
+            catalogue["products"] = self.editor.records
+            written = csv_io.export_products(path, catalogue)
+        except Exception as exc:                 # noqa: BLE001 - reported
+            messagebox.showerror("Could not export", str(exc), parent=self.win)
+            return
+        messagebox.showinfo(
+            "Exported", f"{written} row(s) written to\n{path}", parent=self.win)
+
+    def import_csv(self):
+        """Read products from a spreadsheet, merging by SKU."""
+        import csv_io
+
+        path = filedialog.askopenfilename(
+            parent=self.win, title="Import products",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+
+        # Merge is the default and the prompt says so, because the destructive
+        # option is the one that needs the deliberate answer. A CSV is usually
+        # a partial list -- this week's stock, a supplier's price update --
+        # and replacing wholesale would delete everything not in it.
+        replace = messagebox.askyesno(
+            "Replace or merge?",
+            "Yes  -  replace the whole catalogue with this file\n"
+            "No  -  merge: update products that match by SKU, add new ones\n\n"
+            "Merging is the safe answer. Replacing deletes every product that "
+            "is not in the file.", parent=self.win)
+        try:
+            catalogue, added, updated = csv_io.import_products(path, replace)
+        except Exception as exc:                 # noqa: BLE001 - reported
+            messagebox.showerror("Could not import", str(exc), parent=self.win)
+            return
+
+        self.catalogue = catalogue
+        self.editor.records = catalogue.get("products", [])
+        self.editor.refresh()
+        messagebox.showinfo(
+            "Imported",
+            f"{added} product(s) added, {updated} updated.\n\n"
+            "Nothing is saved until you press Save.", parent=self.win)
 
     def open_pricing(self):
         """Work out a sell price for the selected product and fill it in."""
