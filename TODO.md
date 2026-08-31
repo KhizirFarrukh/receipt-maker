@@ -157,10 +157,10 @@ pricing mistake — so the UI must name which one it is using:
 
 ## 6. Line-item detail, installments and receipt layout  *(agreed 2026-08-31)*
 
-Ten requests that arrived together. They are grouped by what they touch rather than in the order
-they were given, because several are the same change seen from different angles — §6.1 and §6.2
-are one mechanism used twice, and §6.7's two halves are the same widening problem in the form and
-on the page.
+Eleven requests: ten agreed together, and §6.9 added straight after. They are grouped by what they
+touch rather than in the order they were given, because several are the same change seen from
+different angles — §6.1 and §6.2 are one mechanism used twice, and §6.7's two halves are the same
+widening problem in the form and on the page.
 
 **Do §6.4 first.** It is the smallest of these and unblocks the most: it is what makes every other
 per-line number trustworthy.
@@ -210,7 +210,9 @@ therefore shows a figure that is **not what that line actually came to** — the
 only in the totals block far below.
 
 - [ ] The line total must account for that line's own discount and tax, and for its installment
-      plan (§6.5) where it has one.
+      plan (§6.5) where it has one. **Shipping is the exception** — it is charged per shipment
+      group, not per line (§6.9), and apportioning it across lines would invent a split the
+      customer cannot check.
 - [ ] Keep the gross visible too. A customer shown only the net cannot check that the discount was
       applied — so likely both columns, each toggleable per §6.6.
 - [ ] **Use the existing Decimal path**: round each line, then sum the rounded values. Do not
@@ -243,9 +245,10 @@ wrong misstates tax. Ask rather than assume.
       each carry an `enabled` flag, edited under **Tools → Fields & Columns**, and `barcode` ships
       disabled. So for line items this is largely done.
 - [ ] **Audit what is not.** The shipping fee is a label at `config.py:375`, not a toggleable
-      field. Confirm each of discount, tax, shipping, sku and serial can genuinely be turned off
-      *and that the receipt still renders correctly without it* — a disabled column that leaves a
-      gap, or a totals line that still prints, is worse than having no toggle.
+      field — and §6.9 rebuilds it anyway, so do that first and make it toggleable there. Confirm
+      each of discount, tax, shipping, sku and serial can genuinely be turned off *and that the
+      receipt still renders correctly without it* — a disabled column that leaves a gap, or a
+      totals line that still prints, is worse than having no toggle.
 - [ ] Every new field from §6.1–§6.5 arrives toggleable and defaults **off**, so no existing
       receipt changes shape.
 
@@ -278,3 +281,39 @@ new layout logic. Verify against a real multi-page PDF before designing anything
       scanner.
 - [ ] Scanner input is keystrokes ending in Enter. §1 already stops Enter from submitting the item
       dialog; the same care is needed wherever the main window accepts a scan.
+
+### 6.9 Shipping fees per group of lines, not per invoice
+
+Shipping is one invoice-level fee today, so it is effectively charged against the whole order.
+That is wrong whenever an order ships from more than one place: lines 1, 2 and 4 leave one
+warehouse and line 3 leaves another, each with its own carrier cost.
+
+- [ ] A line belongs to a **shipment group**, and each group carries its own shipping fee.
+- [ ] The receipt shows **each group's fee and the combined total**, so the customer can see why
+      the shipping came to what it did rather than being handed one unexplained number.
+- [ ] **Default to today's behaviour.** No groups means one fee and the current single line, so no
+      existing receipt changes shape.
+- [ ] Toggleable per §6.6, like everything else optional here.
+
+**Grouping is a tag on the line, not a range of rows.** The example is lines 1, 2, 4 against line
+3 — the groups interleave, so this cannot be modelled as contiguous sections of the table. Each
+line stores which shipment it belongs to.
+
+**Settle before building:**
+
+- **Does the table reorder to put a shipment together, or keep entry order and mark each line?**
+  Reordering reads better but renumbers the lines, which matters if anyone quotes a line number.
+  Keeping entry order needs a column or marker that survives §6.7's taller rows.
+- **Does the group's name print?** The reason for grouping is which warehouse dispatched it, and
+  that may be internal. An optional label, blank by default, is the safe shape — but ask.
+- **Does tax apply to shipping?** If it does, several shipping rows each need the same treatment,
+  and the tax rows are document-level today. Check before assuming they can stay that way.
+
+**Shipping stays out of the per-line total (§6.4).** A group fee covers several lines at once, and
+splitting it across them would mean inventing an apportionment — by value, by weight, by count? —
+that the customer cannot check. It belongs in the totals block as several rows, not folded into a
+line. Worth stating because §6.4 otherwise pulls every adjustment down to the line.
+
+**Later, once the catalogue is richer (§2):** if a product records where it is stocked, the group
+could be assigned on its own rather than by hand. Do not build for that yet — it only pays off
+once products carry a location, which they do not.
