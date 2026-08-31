@@ -824,6 +824,7 @@ class HistoryDialog:
         buttons.pack(anchor=tk.W, pady=(10, 0))
         ttk.Button(buttons, text="Load into form", command=self.load).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Open PDF", command=self.open_pdf).pack(side=tk.LEFT, padx=6)
+        ttk.Button(buttons, text="Void…", command=self.void).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(buttons, text="Close", command=self.win.destroy).pack(side=tk.LEFT)
 
         self.refresh()
@@ -868,6 +869,41 @@ class HistoryDialog:
         if self.on_load:
             self.on_load(entry)
         self.win.destroy()
+
+    def void(self):
+        """Cancel a receipt: mark it void and put its stock back.
+
+        Confirmed first and not undoable, because it writes a permanent record
+        and moves stock. The invoice number stays used -- a number that has been
+        on a receipt in a customer's hands cannot be un-issued.
+        """
+        import receipt_history
+
+        entry = self._selected()
+        if entry is None:
+            return
+
+        invoice_no = entry.get("invoice_no", "")
+        if entry.get("voided"):
+            messagebox.showinfo("Already void",
+                                f"{invoice_no} is already void.", parent=self.win)
+            return
+
+        if not messagebox.askyesno(
+                "Void this receipt?",
+                f"Mark {invoice_no} void and return its stock?\n\n"
+                "The record stays in the history and the PDF is left alone. "
+                "The invoice number is not reused -- a number that has been on "
+                "a customer's receipt cannot be issued again.",
+                parent=self.win):
+            return
+
+        ok, message = receipt_history.void(invoice_no, "voided from the app")
+        if not ok:
+            messagebox.showerror("Could not void", message, parent=self.win)
+            return
+        messagebox.showinfo("Voided", f"{invoice_no}: {message}", parent=self.win)
+        self.refresh()
 
     def open_pdf(self):
         entry = self._selected()

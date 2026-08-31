@@ -73,7 +73,14 @@ Pick a product instead of retyping its details on every receipt.
 - [ ] Serial-number selection: sell a *specific* held serial rather than typing one.
       **Superseded in scope by §6.1** — a line of qty 3 needs *three* serials, not one.
 - [ ] A low-stock warning at the point of sale, rather than only in the log.
-- [ ] Voiding a receipt should return its stock — there is no "void" concept yet.
+- [x] **Voiding a receipt — DONE.** Tools → Receipt History → **Void…** marks a receipt void
+      and puts its stock back. The two halves pull opposite ways on purpose: the stock
+      returns, because a count can be recounted and goods that were never sold are still on
+      the shelf; the invoice number does **not**, because a number that has been on a
+      customer's receipt cannot be un-issued. The gap in the sequence is explained by the
+      void record rather than avoided. Append-only — the original entry is untouched, since
+      issued-then-cancelled is two facts and not one corrected fact — and the PDF is left
+      where it is, because the customer may still be holding it.
 
 ### Decisions to settle before building
 
@@ -100,7 +107,10 @@ that it would not be a rewrite.
 answer, because the risk is different: a duplicate invoice number is unrecoverable, while a stock
 figure can always be recounted. So stock commits *after* the receipt exists rather than being
 reserved before it, a reissue adjusts by the difference, and overselling is recorded rather than
-refused. Voiding a receipt is still not modelled.
+refused. **Voiding now applies the same asymmetry in reverse:** the stock comes back, the number
+does not. It reuses `stock_deltas` with an empty sale against what the receipt took, so the deltas
+come out negative and the same tested path that removed the stock returns it — rather than a second
+implementation that could disagree with the first.
 
 **Serial numbers are a list, not a count.** Selling one unit should remove *that* serial from
 stock, which means the item dialog needs to offer the serials actually held.

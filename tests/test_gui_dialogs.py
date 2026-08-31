@@ -167,6 +167,55 @@ class HistoryDialogBehaviour(DialogTestCase):
         dialog.win.destroy()
 
 
+class VoidingFromTheHistory(DialogTestCase):
+    ENTRY = {"inv_no": "INV-W1001", "date_str": "26 Aug 2026", "cust": "Ada",
+             "phone": "", "email": "", "receipt_type": "Online", "shipping": "0",
+             "items": [{"sku": "KB-87", "desc": "Keyboard", "qty": 1,
+                        "price": "10.00", "discount": "0", "tax": "0"}]}
+
+    def test_voiding_without_a_selection_asks_for_one(self):
+        receipt_history.record(self.ENTRY, "", True)
+        dialog = settings_ui.HistoryDialog(self.root)
+        dialog.void()
+        self.assertTrue(self.infos)
+        dialog.win.destroy()
+
+    def test_confirming_marks_it_void(self):
+        receipt_history.record(self.ENTRY, "", True)
+        dialog = settings_ui.HistoryDialog(self.root)
+        dialog.tree.selection_set(dialog.tree.get_children()[0])
+        dialog.void()                            # askyesno is stubbed to Yes
+        self.assertTrue(receipt_history.is_voided("INV-W1001"))
+        dialog.win.destroy()
+
+    def test_declining_leaves_it_alone(self):
+        receipt_history.record(self.ENTRY, "", True)
+        settings_ui.messagebox.askyesno = lambda *a, **k: False
+        dialog = settings_ui.HistoryDialog(self.root)
+        dialog.tree.selection_set(dialog.tree.get_children()[0])
+        dialog.void()
+        self.assertFalse(receipt_history.is_voided("INV-W1001"))
+        dialog.win.destroy()
+
+    def test_voiding_an_already_void_receipt_says_so(self):
+        receipt_history.record(self.ENTRY, "", True)
+        receipt_history.void("INV-W1001")
+        dialog = settings_ui.HistoryDialog(self.root)
+        dialog.tree.selection_set(dialog.tree.get_children()[0])
+        dialog.void()
+        self.assertTrue(any("already void" in m for m in self.infos))
+        dialog.win.destroy()
+
+    def test_the_list_refreshes_to_show_it(self):
+        receipt_history.record(self.ENTRY, "", True)
+        dialog = settings_ui.HistoryDialog(self.root)
+        dialog.tree.selection_set(dialog.tree.get_children()[0])
+        dialog.void()
+        values = dialog.tree.item(dialog.tree.get_children()[0])["values"]
+        self.assertIn("VOID", [str(v) for v in values])
+        dialog.win.destroy()
+
+
 class ProductsDialogBehaviour(DialogTestCase):
     def test_an_empty_catalogue_opens(self):
         dialog = settings_ui.ProductsDialog(self.root)

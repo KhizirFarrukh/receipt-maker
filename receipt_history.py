@@ -131,6 +131,82 @@ def record(data, pdf_path="", signed=False):
         return False
 
 
+def void(invoice_no, reason="", settings=None):
+    """Mark a receipt void and return its stock. Returns (ok, message).
+
+    A void is a *new record*, not an edit: the history file is append-only, and
+    a receipt that was issued and later cancelled is two facts rather than one
+    corrected fact. The original entry stays exactly as it was written, which is
+    what makes the file worth having if anyone ever asks what was sold.
+
+    **The invoice number is not freed.** That is the same rule as everywhere
+    else here: a number that has been on a receipt in a customer's hands cannot
+    be un-issued, and handing it out again would put two different sales under
+    one number. The gap in the sequence is the point -- it is explained by the
+    void record sitting in the history.
+
+    **The stock does come back**, which is the opposite decision, and for the
+    reason the two were always different: a stock figure can be recounted, so
+    getting it wrong is recoverable, while a duplicate invoice number is not.
+    Goods that were never sold are still on the shelf.
+    """
+    entry = latest_for(invoice_no)
+    if entry is None:
+        return False, f"No receipt numbered {invoice_no} is in the history."
+    if entry.get("voided"):
+        return False, f"{invoice_no} is already void."
+
+    returned = False
+    try:
+        import product_catalogue
+        # An empty sale against what this receipt took: the deltas come out
+        # negative, so the same tested path that deducted the stock puts it
+        # back, rather than a second implementation that could disagree.
+        returned = product_catalogue.record_sale(
+            invoice_no, [], previous_items=entry.get("items") or [],
+            settings=settings)
+    except Exception as exc:                     # noqa: BLE001 - voiding must not fail
+        logger.warning("Could not return stock for %s: %s", invoice_no, exc)
+
+    stamp = datetime.datetime.now().isoformat(timespec="seconds")
+    record_line = {
+        "history_version": HISTORY_VERSION,
+        "recorded_at": stamp,
+        "invoice_no": _as_text(entry.get("invoice_no")),
+        "receipt_type": _as_text(entry.get("receipt_type")),
+        "date": _as_text(entry.get("date")),
+        "customer": dict(entry.get("customer") or {}),
+        "shipping": _as_text(entry.get("shipping")),
+        # The lines are carried across so a void is self-contained: what was
+        # cancelled is readable without walking back to the original entry.
+        "items": [dict(i) for i in entry.get("items") or []],
+        "pdf_path": _as_text(entry.get("pdf_path")),
+        "pdf_name": _as_text(entry.get("pdf_name")),
+        "signed": bool(entry.get("signed")),
+        "voided": True,
+        "void_reason": _as_text(reason),
+        "stock_returned": bool(returned),
+    }
+    try:
+        os.makedirs(archive_dir(), exist_ok=True)
+        with open(history_path(), "a", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(record_line, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning("Could not record the void of %s: %s", invoice_no, exc)
+        return False, f"Could not write the void record: {exc}"
+
+    logger.warning("Receipt %s was voided%s. Stock %s.", invoice_no,
+                   f" ({reason})" if reason else "",
+                   "was returned" if returned else "was not tracked")
+    return True, ("Voided." + (" Stock returned." if returned else ""))
+
+
+def is_voided(invoice_no):
+    """Whether the most recent record of this receipt is a void."""
+    entry = latest_for(invoice_no)
+    return bool(entry and entry.get("voided"))
+
+
 def entries(newest_first=True):
     """Every recorded receipt. A damaged line is skipped, not fatal."""
     path = history_path()
@@ -210,7 +286,8 @@ def summarise(entry, currency=None):
         entry.get("invoice_no", ""),
         (entry.get("customer") or {}).get("name", ""),
         receipt_render.format_amount(total, currency),
-        "signed" if entry.get("signed") else "unsigned",
+        "VOID" if entry.get("voided") else
+        ("signed" if entry.get("signed") else "unsigned"),
     )
 
 
