@@ -910,6 +910,140 @@ PRODUCT_COLUMNS = [
 ]
 
 
+class PricingDialog:
+    """Work a selling price out from cost or list price. TODO.md section 3.
+
+    **Margin and markup are not the same thing** and mixing them up is a common
+    and expensive pricing mistake: cost 100 at 25% markup is 125, at 25% margin
+    it is 133.33. So the mode is named on screen rather than being an unlabelled
+    percentage, and the result panel shows the margin *and* the markup the price
+    achieves side by side — whichever way it was worked out, both numbers are
+    there to sanity-check against.
+    """
+
+    MODES = (
+        ("markup", "Markup on cost",
+         "Added to what you paid: cost × (1 + markup%). Cost 100 at 25% → 125."),
+        ("margin", "Margin of the sale price",
+         "A share of what you charge: cost ÷ (1 − margin%). Cost 100 at 25% → 133.33."),
+        ("discount", "Discount off the list price",
+         "Taken off the list price: list × (1 − discount%)."),
+    )
+
+    def __init__(self, parent, product, decimals=2):
+        self.result = None
+        self.decimals = decimals
+        cost = str(product.get("cost_price", "") or "")
+        listed = str(product.get("list_price", "") or "")
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("Work out a sell price")
+        self.win.transient(parent)
+        self.win.resizable(False, False)
+        self.win.columnconfigure(1, weight=1)
+
+        name = str(product.get("name", "") or product.get("sku", "") or "this product")
+        ttk.Label(self.win, padding=(12, 10, 12, 4), text=name,
+                  font=("TkDefaultFont", 10, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W)
+
+        self.mode = tk.StringVar(value="markup")
+        self.percent = tk.StringVar(value="25")
+        self.cost = tk.StringVar(value=cost)
+        self.list_price = tk.StringVar(value=listed)
+
+        row = 1
+        for value, label, _ in self.MODES:
+            ttk.Radiobutton(self.win, text=label, value=value,
+                            variable=self.mode, command=self.refresh).grid(
+                row=row, column=0, columnspan=2, sticky=tk.W, padx=12)
+            row += 1
+
+        self.explain = ttk.Label(self.win, foreground="#64748b", wraplength=380,
+                                 justify=tk.LEFT, padding=(12, 2, 12, 6))
+        self.explain.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
+
+        for label, var in (("Cost price", self.cost),
+                           ("List price", self.list_price),
+                           ("Percent", self.percent)):
+            ttk.Label(self.win, text=label).grid(row=row, column=0, padx=12,
+                                                 pady=4, sticky=tk.W)
+            entry = ttk.Entry(self.win, textvariable=var, width=24)
+            entry.grid(row=row, column=1, padx=12, pady=4, sticky=tk.EW)
+            var.trace_add("write", lambda *_: self.refresh())
+            row += 1
+
+        self.result_label = ttk.Label(self.win, padding=(12, 8), wraplength=380,
+                                      justify=tk.LEFT)
+        self.result_label.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
+
+        buttons = ttk.Frame(self.win, padding=(12, 8))
+        buttons.grid(row=row, column=0, columnspan=2, sticky=tk.E)
+        self.apply_button = ttk.Button(buttons, text="Use this price",
+                                       command=self.apply)
+        self.apply_button.pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="Cancel",
+                   command=self.win.destroy).pack(side=tk.LEFT, padx=4)
+
+        self.refresh()
+        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+
+    def computed(self):
+        """The price this mode and these figures give, or None if unusable."""
+        mode = self.mode.get()
+        percent = product_catalogue.to_decimal(self.percent.get())
+        try:
+            if mode == "markup":
+                return product_catalogue.price_from_markup(self.cost.get(), percent)
+            if mode == "margin":
+                return product_catalogue.price_from_margin(self.cost.get(), percent)
+            return product_catalogue.price_from_discount(self.list_price.get(), percent)
+        except Exception:                        # noqa: BLE001 - reported below
+            return None
+
+    def refresh(self, *_):
+        for value, _, explanation in self.MODES:
+            if value == self.mode.get():
+                self.explain.config(text=explanation)
+
+        price = self.computed()
+        if price is None:
+            self.result_label.config(
+                text="A 100% margin would mean selling at an infinite price — "
+                     "pick a margin below 100.", foreground="#b91c1c")
+            self.apply_button.state(["disabled"])
+            return
+
+        rounded = product_catalogue.quantize(price, self.decimals)
+        cost = product_catalogue.to_decimal(self.cost.get())
+        margin = product_catalogue.margin_of(cost, rounded)
+        markup = product_catalogue.markup_of(cost, rounded)
+
+        if rounded <= 0:
+            self.result_label.config(
+                text=f"Sell price: {rounded}  — check the figures; a price of "
+                     f"zero or less is not a sale.", foreground="#b45309")
+            self.apply_button.state(["disabled"])
+            return
+
+        # Both numbers, always. Whichever way the price was worked out, seeing
+        # the other one is what catches a margin entered as a markup.
+        self.result_label.config(
+            text=f"Sell price: {rounded}\n"
+                 f"That is a margin of {margin:.1f}% and a markup of {markup:.1f}%.",
+            foreground="#166534")
+        self.apply_button.state(["!disabled"])
+
+    def apply(self):
+        price = self.computed()
+        if price is None:
+            return
+        self.result = str(product_catalogue.quantize(price, self.decimals))
+        self.win.destroy()
+
+
 class ProductsDialog:
     """Tools → Products. The catalogue you sell from."""
 
@@ -928,12 +1062,20 @@ class ProductsDialog:
         ttk.Label(
             frame, foreground="#64748b", justify=tk.LEFT, wraplength=640,
             text="Products you can pick from when adding an item to a receipt.\n"
-                 "Stock is recorded but not yet deducted when you sell — that is still "
-                 "to come.").pack(anchor=tk.W, pady=(0, 8))
+                 "Stock is deducted after a receipt is generated, when inventory "
+                 "tracking is on.").pack(anchor=tk.W, pady=(0, 8))
 
         self.editor = RecordListEditor(frame, "", PRODUCT_COLUMNS,
                                        self.catalogue.get("products", []))
         self.editor.pack(fill=tk.BOTH, expand=True)
+
+        tools = ttk.Frame(frame)
+        tools.pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(tools, text="Work out a sell price…",
+                   command=self.open_pricing).pack(side=tk.LEFT)
+        ttk.Label(tools, foreground="#64748b",
+                  text="from cost or list price, by markup, margin or discount"
+                  ).pack(side=tk.LEFT, padx=(8, 0))
 
         footer = ttk.Frame(self.win, padding=(12, 0, 12, 12))
         footer.pack(fill=tk.X)
@@ -942,6 +1084,24 @@ class ProductsDialog:
         ttk.Button(footer, text="Cancel", command=self.win.destroy).pack(side=tk.RIGHT)
         ttk.Button(footer, text="Save", command=self.save).pack(side=tk.RIGHT, padx=6)
         self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+
+    def open_pricing(self):
+        """Work out a sell price for the selected product and fill it in."""
+        selection = self.editor.tree.selection()
+        if not selection:
+            messagebox.showinfo(
+                "Pick a product",
+                "Select the product you are pricing first.", parent=self.win)
+            return
+        index = self.editor.tree.index(selection[0])
+        product = self.editor.records[index]
+
+        decimals = config.load_app_settings().get("currency", {}).get("decimals", 2)
+        dialog = PricingDialog(self.win, product, decimals)
+        self.win.wait_window(dialog.win)
+        if dialog.result is not None:
+            product["sell_price"] = dialog.result
+            self.editor.refresh()
 
     def save(self):
         catalogue = dict(self.catalogue)

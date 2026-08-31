@@ -105,9 +105,11 @@ refused. Voiding a receipt is still not modelled.
 **Serial numbers are a list, not a count.** Selling one unit should remove *that* serial from
 stock, which means the item dialog needs to offer the serials actually held.
 
-## 3. Sell price from cost — margin / markup / discount modes
+## 3. Sell price from cost — margin / markup / discount modes — **DONE**
 
-- [ ] Compute `sell_price` from `cost_price` or `list_price` by a chosen mode.
+- [x] **Tools → Products → "Work out a sell price…"**. Pick a product, choose the mode, get
+      the price. The arithmetic and its tests were already here; what was missing was any way
+      to reach them, and doing the sum by hand is where the mistake below gets made.
 
 **Margin and markup are not the same thing**, and treating them as such is a common and expensive
 pricing mistake — so the UI must name which one it is using:
@@ -116,8 +118,11 @@ pricing mistake — so the UI must name which one it is using:
 - **Margin** — a share of the sale price: `sell = cost ÷ (1 − margin%)`. Cost 100 at 25% → **133.33**.
 - **Discount** — off the list price: `sell = list × (1 − discount%)`.
 
-- [ ] Show the resulting margin *and* markup side by side, so the number can be sanity-checked.
-- [ ] Round to the configured currency precision, using the existing Decimal arithmetic.
+- [x] The result panel shows the margin **and** the markup whichever mode was used. That is the
+      check that catches a margin typed in as a markup, which silently under-prices everything.
+- [x] Rounds to the configured currency precision. A 100% margin is refused rather than
+      dividing by zero, and so is any figure that lands at or below nothing — that is not a
+      sale.
 
 ## 4. Carried over from the current work (see TASKS.md Phase H)
 
@@ -151,9 +156,8 @@ pricing mistake — so the UI must name which one it is using:
       with the app, so a receipt can still look slightly different on another machine.
 - [ ] **`document.title`.** "SALES RECEIPT" is a literal in `receipt_info.html` — editable, but
       never became a config key.
-- [ ] **Main-window form.** The item dialog builds itself from `fields.json`; the customer form at
-      the top of the main window is still a fixed layout, so receipt-level custom fields cannot yet
-      be typed in.
+- [x] **Main-window form — DONE, as a prerequisite of §6.3.** The customer form is built from
+      `fields.json` now, so receipt-level custom fields can be typed in as well as printed.
 
 ## 6. Line-item detail, installments and receipt layout — **DONE** *(2026-08-31)*
 

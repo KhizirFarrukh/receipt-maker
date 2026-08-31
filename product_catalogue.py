@@ -49,11 +49,11 @@ def catalogue_path():
 
 
 # ------------------- money helpers -------------------
-def to_decimal(value):
-    try:
-        return Decimal(str(value).strip() or "0")
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("0")
+# to_decimal and quantize live in money.py, below everything, so the rounding
+# here is the same rounding the renderer and the totals use. This module kept
+# its own copy of to_decimal until money.py was extracted; two implementations
+# of "read a number the user typed" is one too many on a document about money.
+from money import to_decimal, quantize          # noqa: E402,F401
 
 
 def price_from_markup(cost, percent):
