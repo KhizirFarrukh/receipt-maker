@@ -1164,11 +1164,25 @@ class ReceiptApp:
 
         tags = self.shipment_tags_used()
         if not tags:
-            messagebox.showinfo(
-                "No shipments yet",
-                "Give at least one item a shipment before setting per-shipment "
-                "shipping. Items left without one share the single Shipping "
-                "fee at the top.", parent=self.root)
+            # The Shipment column ships disabled, so "give an item a shipment"
+            # is not actionable until it is switched on -- saying that without
+            # saying where sends someone hunting for a control that is not
+            # there yet.
+            enabled = any(f["key"] == "shipment" for f in self.input_fields)
+            if not enabled:
+                messagebox.showinfo(
+                    "Shipments are switched off",
+                    "Turn the Shipment column on under Tools → Fields & "
+                    "Columns first. Then give each item a shipment, and set a "
+                    "fee for each one here.\n\nUntil then, the single "
+                    "Shipping fee at the top covers the whole order.",
+                    parent=self.root)
+            else:
+                messagebox.showinfo(
+                    "No shipments yet",
+                    "Give at least one item a shipment before setting "
+                    "per-shipment shipping. Items left without one share the "
+                    "single Shipping fee at the top.", parent=self.root)
             return
 
         existing = {str(e.get("id", "")): str(e.get("fee", ""))

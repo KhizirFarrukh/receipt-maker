@@ -119,9 +119,18 @@ Remove-Item -LiteralPath "tests\fixtures\env\Templates" -Recurse -Force -ErrorAc
 & $py -m coverage html             # browsable report in htmlcov/
 ```
 
-**838 tests, 92.3% coverage** at the time of writing, with a floor of 80% enforced by
-`.coveragerc`. Branch coverage is on, so an untested `else` counts as a miss. `template_engine`,
-`keygen` and `verify_receipt` are at 100%; the lowest is `invoice_counter` at 86.6%.
+**1204 tests, 91.4% coverage**, with a floor of 80% enforced by `.coveragerc`. Branch coverage is
+on, so an untested `else` counts as a miss.
+
+`money`, `shipments`, `keygen` and `verify_receipt` are at 100%; `installments` 98%,
+`receipt_render` 97%, `product_catalogue` 96%. The lowest is `main.py` at 85% — the GUI, where what
+is left needs a real display or a real event loop.
+
+A note on the shape of that number: adding §6 pushed the total *down* to 88.6% before these tests
+were written, because ~1000 statements of new feature code arrived faster than the tests for
+constructing its dialogs. The handlers were tested as they were built; the widget-building was not.
+Worth remembering that a healthy percentage is a ratio, and a big feature can move it without
+anything getting worse.
 
 ### What the remaining ~8% actually is
 
@@ -161,19 +170,25 @@ has been regenerated exactly **once**, deliberately, when receipt-field styling 
 
 ## What to do next
 
-See [`../TODO.md`](../TODO.md). **TODO.md §6 is the newest batch** — ten requests agreed on
-2026-08-31 covering per-unit serial numbers, installment plans, a real per-line total, and receipt
-row layout. Nothing in it is started. In rough order of value:
+See [`../TODO.md`](../TODO.md). **§6 is complete** — all twelve items of the 2026-08-31 batch are
+built and tested, along with §3 (the pricing UI) and the void that §2 was missing.
 
-1. **A real per-line total** (TODO §6.4). The smallest of the §6 batch and the one that unblocks
-   the rest: `receipt_render.py:875` currently computes a line as `qty × price`, so a line with a
-   discount or tax shows a figure that is not what that line came to. Two open questions in §6.5
-   and §6.7 want the user's answer before their features are built — read those before starting.
-2. Margin/markup/discount **UI** — the arithmetic and its tests are already done in
-   `product_catalogue.py`; it needs a mode picker in the product editor.
-3. **Voiding a receipt** — the clearest gap the stock work opened. There is no void concept, so a
-   cancelled sale does not return its stock.
-4. CSV import/export, save-draft, image signature, `--doctor`.
+Everything §6 added defaults **off**, so an upgrade changes no existing receipt, and every switch is
+in **Tools → Settings** or **Tools → Fields & Columns**. That was the standing request behind the
+whole batch: no JSON file should need editing.
 
-Serial-number selection was item 3 here; it is now folded into §6.1, which supersedes it — a line
-of qty 3 needs *three* serials, not one.
+What is left, in rough order of value:
+
+1. **CSV import/export** — for the product catalogue (§2) and as an export view over the receipt
+   history (§4). JSON stays the source of truth; CSV is the view.
+2. **Save draft** (§4, H2) — store an in-progress receipt and restore it. Consumes no invoice
+   number.
+3. **`--doctor`** (§5, Stage 7) — the environment check: missing browser, unreadable key, expiring
+   certificate, read-only output folder.
+4. **Image signature** (§4, H6) — a scanned signature on the receipt. Decorative, *not*
+   cryptographic, and the README has to keep saying so.
+5. Stage 8 polish: configurable filename patterns, reprint with a DUPLICATE badge, restore default
+   templates, a pinned Playwright version.
+
+Smaller leftovers: neutral wording in `Templates/terms.html`, no bundled OFL font, and
+`document.title` still being a literal in `receipt_info.html`.

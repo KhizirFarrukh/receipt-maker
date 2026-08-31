@@ -5,8 +5,9 @@ why it is that way.
 
 ## The layering rule
 
-**`config`, `template_engine`, `receipt_render`, `receipt_service`, `product_catalogue`,
-`receipt_history`, `invoice_counter`, `receipt_signing` and `cli` must never import tkinter.**
+**`config`, `money`, `template_engine`, `receipt_render`, `receipt_service`,
+`product_catalogue`, `receipt_history`, `invoice_counter`, `receipt_signing`, `line_units`,
+`installments`, `shipments`, `payment_methods` and `cli` must never import tkinter.**
 
 Only `main.py` and `settings_ui.py` are GUI. Two tests assert this by importing the render path in
 a subprocess and checking `tkinter` is absent from `sys.modules`. It is what lets the golden gate
@@ -26,6 +27,11 @@ and most of the suite run without a display.
 | `receipt_signing.py` | PAdES signing, verification, key generation and import. No GUI, no config coupling. |
 | `receipt_history.py` | The record of every generated receipt, and reloading one. |
 | `product_catalogue.py` | Products, variants, lookup, pricing arithmetic, stock deduction. |
+| `money.py` | `to_decimal` and `quantize`, and nothing else. At the bottom of the import graph so every module that touches money rounds the same way. |
+| `line_units.py` | Per-unit values: one serial number, and optionally one shop-assigned ID, for each thing sold. |
+| `installments.py` | Instalment plans: period, deposit, monthly. Scope exclusivity and the financed total. |
+| `shipments.py` | Shipping charged per group of lines: grouping, the stable sort, the neutral markers. |
+| `payment_methods.py` | What the customer pays with and what it costs, keeping a government levy and a processor's fee apart. |
 | `cli.py` | Headless entry point. `--render-html` (the golden target), `--check`, `--config-dir`. |
 | `keygen.py`, `verify_receipt.py` | Command-line signing helpers; the reference verifier. |
 
@@ -36,7 +42,7 @@ end onto the same loaders.
 
 | File | Contents | Tracked? |
 |---|---|---|
-| `appsettings.json` | Company, currency, tax, dates, receipt types, invoice, signing, links, UI, inventory, render, fonts | yes |
+| `appsettings.json` | Company, currency, tax, dates, receipt types, invoice, signing, links, UI, inventory, render, fonts, shipping, installments, payment | yes |
 | `fields.json` | Line-item and receipt fields, warranty options | yes |
 | `strings.json` | Words the renderer composes (column headings, totals labels) | yes |
 | `filename_config.json` | Which fields go into a PDF filename | yes |
@@ -89,14 +95,29 @@ or the filesystem inside it — inject those from `build_html`.
    but only certificates this install actually archived.
 10. **Nothing optional may fail a receipt.** History, stock and logging all warn and carry on. The
     signed PDF is the legal artifact.
-11. **`amount` is the gross; `line_total` is the net.** `amount` is `qty × price` and must
+11. **Read an item row with `item_at()`, never `tree.item(row)["values"]`.** The latter runs
+    every cell through Tcl's type guessing, which turns a UPC of `0000000000000` into `0` and
+    `"007"` into `7`. `tree.set(row)` returns what was stored.
+12. **Per-unit values are records, not parallel lists**, and the list length is the quantity.
+    Everything that reads them normalises first (`line_units.normalise`), so a quantity changed
+    after the serials were typed pads or trims rather than losing them.
+13. **A receipt carries one instalment plan, or one per line, never both** — enforced in
+    `installments.scope_of`, not only in the dialogs, because history and hand-edited files can
+    carry combinations no dialog would allow.
+14. **Grouping lines by shipment is a *stable* sort.** Determinism is tested and the golden gate
+    compares bytes; an unstable sort would let one receipt render two ways.
+15. **A payment-method charge is `tax` or `fee`, never merged.** Identical arithmetic, different
+    reporting: recording a processor's fee as tax overstates the tax collected.
+16. **Voiding returns stock but never frees the invoice number.** A count can be recounted; a
+    number that has been in a customer's hands cannot be un-issued.
+17. **`amount` is the gross; `line_total` is the net.** `amount` is `qty × price` and must
     stay that way — it is on by default, so redefining it would change the figure printed on
     every receipt already in use. `line_total` adds the line's own tax and takes off its own
     discount, rounding each part *before* adding, because the totals block sums the three as
     separate running totals. Rounding the sum instead makes the column disagree with the
     totals below it by a penny on some receipts and not others. Shipping is never in either:
     it is charged per shipment, across several lines.
-12. **`row_to_item` / `item_to_row` in `main.py` are the only place** the item tree's positional
+18. **`tree_keys()` in `main.py` is the only place** the item tree's positional
     storage maps to field keys. Drift there silently puts values in the wrong column.
 
 ## The test suite
@@ -116,6 +137,16 @@ HANDOFF.md breaks down what the uncovered remainder is and why.
 | `test_cli.py` | `cli.py`, `keygen.py`, `verify_receipt.py` — exit codes are the contract |
 | `test_gui_dialogs.py`, `test_gui_main.py`, `test_gui_internals.py` | The GUI, driven headlessly |
 | `test_line_total.py` | The per-line total: arithmetic, that it sums to the totals, migration |
+| `test_line_units.py` | Per-unit serials and IDs; that they are records, not parallel lists |
+| `test_installments.py` | Plans, scope exclusivity, and that the cash price stays the total |
+| `test_shipments.py` | Grouping, the stable sort, per-shipment fees, the neutral markers |
+| `test_payment_methods.py` | Payment charges, and that tax and fee never merge |
+| `test_scanning.py` | Scan to add, rescan to increment, Enter never escaping |
+| `test_line_total.py` | The per-line total: arithmetic, that it sums to the totals, migration |
+| `test_order_notes.py` | Order notes, and the receipt-level form built from `fields.json` |
+| `test_toggles.py` | The section 6.6 audit: every switch, checked against the rendered page |
+| `test_voiding.py` | Voiding: stock returns, the invoice number does not |
+| `test_pricing_ui.py` | Margin / markup / discount, and that both numbers are always shown |
 | `test_edges.py` | The branches the per-feature files miss: parse failures, odd inputs |
 | `test_regressions.py` | One test per bug found, saying what it protects |
 | `gate_env.py` | Shared setup that pins tests to the fixture config |
@@ -134,7 +165,20 @@ class name**, because `styles.css` is embedded in the rendered HTML.
   installs get the neutral `$`.
 - v3 → v4: added `invoice`, preserving the `INV-` prefix and start number verbatim.
 
-`fields.json` is at **v3** (v2 added the product barcode; v3 added the per-line total). Both
-arrived disabled, so an upgrade changes no existing receipt.
+`fields.json` is at **v6**:
+
+| Version | Added |
+|---|---|
+| v2 | the product barcode |
+| v3 | the per-line total (`line_total`) |
+| v4 | per-unit values: the `per_unit` flag on `serial`, and `unit_id` |
+| v5 | the `shipment` tag |
+| v6 | order notes (`notes`, a receipt-level field) |
+
+**Every one arrived disabled**, so an upgrade changes no existing receipt. Note that
+`receipt_fields` and `line_item_fields` are replaced wholesale on load rather than deep-merged --
+their order is the column order -- so a new built-in reaches an existing install *only* by
+migration. Forgetting that ships a feature that works on a fresh install and is invisible on the
+user's.
 
 A config written by a *newer* version is refused with a clear message rather than downgraded.
