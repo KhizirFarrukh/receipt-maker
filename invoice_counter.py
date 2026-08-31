@@ -43,6 +43,19 @@ LOCK_STALE_SECONDS = 60.0
 _LOCK_POLL_SECONDS = 0.05
 
 
+#: Errors that mean "someone else is using it, try again", not "give up".
+#:
+#: EEXIST is the lock working as designed. EACCES is Windows: a create that
+#: races another process's delete of the same name fails with a permission
+#: error rather than "already exists", and Windows also refuses to create a
+#: name that is mid-deletion. Treating it as fatal made a *successful* lock
+#: hand-off look like a failure, which showed up as two instances reserving at
+#: once failing a receipt roughly one time in ten. A genuine permission problem
+#: still surfaces -- it just takes the retry window to do so, and reports the
+#: real OS error rather than blaming a second instance.
+_CONTENDED_ERRNOS = frozenset({errno.EEXIST, errno.EACCES})
+
+
 class CounterError(RuntimeError):
     """The invoice sequence could not be read or advanced."""
 
@@ -100,17 +113,26 @@ class _FileLock:
                 os.write(self._fd, str(os.getpid()).encode("ascii"))
                 return self
             except OSError as exc:
-                if exc.errno != errno.EEXIST:
+                if exc.errno not in _CONTENDED_ERRNOS:
                     raise CounterError(
                         f"Could not lock the invoice counter:\n{exc}") from exc
-                if self._break_if_stale():
+                if exc.errno == errno.EEXIST and self._break_if_stale():
                     continue
                 if time.monotonic() >= deadline:
+                    # Two very different problems reach here, and telling them
+                    # apart matters: EEXIST means somebody else holds the lock,
+                    # EACCES after retrying means the folder itself will not
+                    # allow the file. Saying "close the other copy" to someone
+                    # with a read-only invoices folder sends them hunting for a
+                    # second instance that does not exist.
+                    if exc.errno == errno.EEXIST:
+                        raise CounterError(
+                            "Another copy of the app is still writing the invoice "
+                            "number and did not finish in time. Close any other "
+                            "instance and try again."
+                        ) from exc
                     raise CounterError(
-                        "Another copy of the app is still writing the invoice "
-                        "number and did not finish in time. Close any other "
-                        "instance and try again."
-                    ) from exc
+                        f"Could not lock the invoice counter:\n{exc}") from exc
                 time.sleep(_LOCK_POLL_SECONDS)
 
     def _break_if_stale(self):

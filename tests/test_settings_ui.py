@@ -146,8 +146,13 @@ class SettingsEditor(EditorTestCase):
         self.assertEqual(self.saved_settings()["currency"]["decimals"], 0)
 
     def test_an_invalid_value_is_refused_and_the_window_stays_open(self):
-        before = self.saved_settings()
         dialog = settings_ui.SettingsDialog(self.root)
+        # Read the baseline *after* the dialog loads. Opening it calls
+        # load_app_settings(), which deep-merges any newly shipped key and
+        # persists the result -- so a baseline taken before that legitimately
+        # differs from the file, and the test would blame save() for a write it
+        # did not make. See PITFALLS.md, "Loading config can rewrite the file".
+        before = self.saved_settings()
         dialog.variables["currency.decimals"][1].set("99")
         dialog.save()
 

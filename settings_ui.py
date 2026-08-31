@@ -112,6 +112,12 @@ SETTINGS_SECTIONS = [
         ("render.fail_on_missing_image", "Treat a missing image as an error", "bool",
          {"help": "On: refuse to issue a receipt whose logo is missing."}),
         ("render.timeout_ms", "Render timeout (ms)", "int", {}),
+        ("installments.enabled", "Offer instalment plans", "bool",
+         {"help": "Adds a plan button to the receipt and to each item. The "
+                  "cash price stays the receipt total; the plan is shown "
+                  "beside it, because tax applies to the goods rather than "
+                  "to financing them. A receipt may carry one whole-order "
+                  "plan or one per line, never both."}),
         ("render.keep_rows_whole", "Keep a product line on one page", "bool",
          {"help": "A line is moved whole to the next page rather than split "
                   "across the break. Matters most when a line carries several "

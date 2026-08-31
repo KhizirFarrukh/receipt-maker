@@ -239,6 +239,9 @@ class ReceiptApp:
 
         ttk.Label(main_frame, text=self._money_field("Shipping")).grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
         self.shipping = tk.StringVar()
+        # A plan covering the whole order. Kept as a plain dict rather than a Tk
+        # variable because it is three numbers, not one, and nothing binds to it.
+        self.order_plan = {}
         ttk.Entry(main_frame, textvariable=self.shipping, width=15).grid(row=2, column=4, padx=5, pady=2, sticky=tk.W)
 
         # --- items frame ---
@@ -253,6 +256,17 @@ class ReceiptApp:
         toolbar.pack(fill=tk.X, pady=2)
         ttk.Button(toolbar, text="+ Add Item", command=self.add_item).pack(side=tk.LEFT, padx=5)
         ttk.Button(toolbar, text="Edit Selected", command=self.edit_item).pack(side=tk.LEFT, padx=5)
+        # A plan for the whole order. Only built when plans are switched on, so
+        # a shop that never finances anything never sees the button.
+        self.order_plan_button = None
+        self.order_plan_label = None
+        if self.installments_enabled():
+            self.order_plan_button = ttk.Button(
+                toolbar, text="Order instalment plan…",
+                command=self.edit_order_plan)
+            self.order_plan_button.pack(side=tk.LEFT, padx=5)
+            self.order_plan_label = ttk.Label(toolbar, text="", foreground="#64748b")
+            self.order_plan_label.pack(side=tk.LEFT, padx=(2, 0))
         ttk.Button(toolbar, text="- Remove Selected", command=self.remove_item).pack(side=tk.LEFT, padx=5)
 
         # Treeview for items (single selection: edit/remove act on one row).
@@ -694,6 +708,46 @@ class ReceiptApp:
                   foreground="#64748b").pack(side=tk.LEFT, padx=(8, 0))
         next_row += 1
 
+        # A plan for this line alone. Only offered when plans are switched on,
+        # so a shop that never finances anything sees nothing about it.
+        plan_state = {"plan": {}}
+        plan_summary = None
+        if self.installments_enabled():
+            import installments
+
+            plan_row = ttk.Frame(dialog)
+            plan_row.grid(row=next_row, column=0, columnspan=2,
+                          padx=10, pady=(2, 2), sticky=tk.W)
+
+            def edit_line_plan():
+                if installments.plan_of({"installment": self.order_plan}):
+                    messagebox.showinfo(
+                        "One plan or the other",
+                        "This receipt already has a whole-order instalment plan. "
+                        "A receipt can carry one plan or one per line, not both -- "
+                        "two sets of plans give a total nobody can reconstruct.\n\n"
+                        "Clear the order plan first if you want per-line plans.",
+                        parent=dialog)
+                    return
+                chosen = self.open_installment_dialog(
+                    dialog, plan_state["plan"], "Instalment plan for this item")
+                if chosen is not None:
+                    plan_state["plan"] = chosen
+                    refresh_plan_summary()
+
+            ttk.Button(plan_row, text="Instalment plan…",
+                       command=edit_line_plan).pack(side=tk.LEFT)
+            plan_summary = ttk.Label(plan_row, text="", foreground="#64748b")
+            plan_summary.pack(side=tk.LEFT, padx=(8, 0))
+            next_row += 1
+
+        def refresh_plan_summary():
+            if plan_summary is None:
+                return
+            import installments
+            text = installments.describe(plan_state["plan"], lambda v: f"{v:,.2f}")
+            plan_summary.config(text=text or "none")
+
         # Warranty options come from fields.json. An option containing "#"
         # prompts for a whole number, so one entry covers 12 Months, 24 Months
         # and anything else the shop offers.
@@ -746,6 +800,7 @@ class ReceiptApp:
                 else:
                     var.set("" if value is None else str(value))
             unit_state["units"] = existing.get(line_units.UNITS_KEY) or []
+            plan_state["plan"] = existing.get("installment") or {}
             option, number = self.match_warranty_option(
                 str(existing.get("warranty", "")), warranty_options)
             if option:
@@ -754,6 +809,7 @@ class ReceiptApp:
                 warranty_number.set(number)
         on_warranty_type_change()
         refresh_units_summary()
+        refresh_plan_summary()
 
         def save():
             values = {}
@@ -785,6 +841,9 @@ class ReceiptApp:
                         f"{gaps}.\n\nSave the line anyway?", parent=dialog):
                     return
                 line_units.set_units(values, units)
+
+            if plan_state["plan"]:
+                values["installment"] = plan_state["plan"]
 
             self.remember_sticky(values)
             row_values = self.item_to_row(values)
@@ -898,6 +957,138 @@ class ReceiptApp:
         parent.wait_window(win)
         return result["units"]
 
+    def lines_with_plans(self):
+        """How many item rows carry their own instalment plan."""
+        count = 0
+        for row in self.items_tree.get_children():
+            item = self.row_to_item(self.items_tree.item(row)["values"])
+            if item.get("installment"):
+                count += 1
+        return count
+
+    def edit_order_plan(self):
+        """Set or clear the plan covering the whole receipt."""
+        lines = self.lines_with_plans()
+        if lines:
+            messagebox.showinfo(
+                "One plan or the other",
+                f"{lines} item(s) already carry their own instalment plan. A "
+                "receipt can have one whole-order plan or one per line, not "
+                "both -- two sets of plans give a total nobody can "
+                "reconstruct.\n\nClear the per-item plans first.",
+                parent=self.root)
+            return
+        chosen = self.open_installment_dialog(
+            self.root, self.order_plan, "Instalment plan for the whole order")
+        if chosen is not None:
+            self.order_plan = chosen
+            self.refresh_order_plan_label()
+
+    def refresh_order_plan_label(self):
+        if self.order_plan_label is None:
+            return
+        import installments
+        text = installments.describe(self.order_plan, lambda v: f"{v:,.2f}")
+        self.order_plan_label.config(text=text)
+
+    def open_installment_dialog(self, parent, plan=None, title="Instalment plan"):
+        """Collect a period, a deposit and a monthly amount. Returns:
+
+          * a plan dict   -- saved
+          * {}            -- the user cleared the plan
+          * None          -- cancelled, leave whatever was there alone
+
+        The three outcomes are distinct because "no plan" and "did not decide"
+        must not be the same answer: cancelling a dialog should never silently
+        remove a plan that was already agreed.
+        """
+        import installments
+
+        current = installments.normalise(plan) or {}
+        win = tk.Toplevel(parent)
+        win.title(title)
+        win.transient(parent)
+        win.resizable(False, False)
+        win.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            win, padding=(12, 10, 12, 6), wraplength=430, justify=tk.LEFT,
+            text="The cash price stays the receipt total. The plan is shown "
+                 "beside it, so the customer can see both what the goods cost "
+                 "and what paying monthly comes to.",
+        ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+
+        months = tk.StringVar(value=str(current.get("months", "") or ""))
+        down = tk.StringVar(value=str(current.get("down", "") or ""))
+        monthly = tk.StringVar(value=str(current.get("monthly", "") or ""))
+
+        rows = (("Period (months)", months),
+                (self._money_field("Down payment"), down),
+                (self._money_field("Monthly payment"), monthly))
+        for index, (label, var) in enumerate(rows, start=1):
+            ttk.Label(win, text=label).grid(row=index, column=0, padx=12, pady=5,
+                                            sticky=tk.W)
+            ttk.Entry(win, textvariable=var, width=INPUT_WIDTH).grid(
+                row=index, column=1, padx=12, pady=5, sticky=tk.EW)
+
+        summary = ttk.Label(win, text="", foreground="#64748b", padding=(12, 0))
+        summary.grid(row=4, column=0, columnspan=2, sticky=tk.W)
+
+        def refresh(*_):
+            candidate = {"months": months.get(), "down": down.get(),
+                         "monthly": monthly.get()}
+            try:
+                installments.validate(candidate)
+            except installments.InstallmentError as exc:
+                summary.config(text=str(exc).split(": ", 1)[-1], foreground="#b45309")
+                return
+            total = installments.financed_total(candidate)
+            if total:
+                summary.config(text=f"Total under this plan: {total:,.2f}",
+                               foreground="#166534")
+            else:
+                summary.config(text="")
+
+        for var in (months, down, monthly):
+            var.trace_add("write", refresh)
+        refresh()
+
+        result = {"plan": None}
+
+        def save():
+            candidate = {"months": months.get(), "down": down.get(),
+                         "monthly": monthly.get()}
+            try:
+                validated = installments.validate(candidate)
+            except installments.InstallmentError as exc:
+                messagebox.showerror("Instalment plan", str(exc), parent=win)
+                return
+            result["plan"] = {} if validated is None else candidate
+            win.destroy()
+
+        def clear():
+            result["plan"] = {}
+            win.destroy()
+
+        buttons = ttk.Frame(win, padding=(12, 10))
+        buttons.grid(row=5, column=0, columnspan=2, sticky=tk.E)
+        ttk.Button(buttons, text="Save", command=save).pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="No plan", command=clear).pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=4)
+
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        _safe_grab(win)
+        parent.wait_window(win)
+        return result["plan"]
+
+    def installments_enabled(self):
+        """Whether plans are offered at all -- section 6.5's global switch."""
+        try:
+            return bool(config.load_app_settings()
+                        .get("installments", {}).get("enabled", False))
+        except Exception:                        # noqa: BLE001 - never block a sale
+            return False
+
     def sticky_values(self):
         """Values remembered from the last item, for fields marked `sticky`.
 
@@ -954,6 +1145,7 @@ class ReceiptApp:
         if self.warranty_enabled:
             keys.append("warranty")
         keys.append(line_units.UNITS_KEY)
+        keys.append("installment")
         return keys
 
     def row_to_item(self, values):
@@ -980,16 +1172,29 @@ class ReceiptApp:
                 parsed = []
             if isinstance(parsed, list):
                 line_units.set_units(item, [u for u in parsed if isinstance(u, dict)])
+
+        raw_plan = item.get("installment", "")
+        item.pop("installment", None)
+        if raw_plan:
+            try:
+                parsed = json.loads(raw_plan)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict) and parsed:
+                item["installment"] = parsed
         return item
 
     def item_to_row(self, item):
         """The inverse of row_to_item: a dict -> the tree's positional tuple."""
-        units = item.get(line_units.UNITS_KEY) or []
-        encoded = json.dumps(units, ensure_ascii=False) if units else ""
+        structured = {
+            line_units.UNITS_KEY: item.get(line_units.UNITS_KEY) or [],
+            "installment": item.get("installment") or {},
+        }
         row = []
         for key in self.tree_keys():
-            if key == line_units.UNITS_KEY:
-                row.append(encoded)
+            if key in structured:
+                value = structured[key]
+                row.append(json.dumps(value, ensure_ascii=False) if value else "")
             else:
                 row.append(item.get(key, ""))
         return tuple(row)
@@ -1197,6 +1402,24 @@ class ReceiptApp:
             "receipt_type": receipt_type,
             "shipping": shipping_float,
         }
+        if self.order_plan:
+            data["installment"] = self.order_plan
+
+        # One plan, or one per line, never both. Enforced here as well as in the
+        # dialogs, because a receipt reloaded from history can carry a
+        # combination no dialog would have allowed.
+        try:
+            import installments
+            installments.scope_of(data, items)
+        except Exception as exc:                 # noqa: BLE001 - shown, not swallowed
+            show_error(self.root, "Instalment plans conflict", str(exc),
+                       traceback.format_exc())
+            # The number stays consumed -- handing it back would reopen the
+            # race the reservation closes -- so record why the gap exists.
+            if reserved:
+                invoice_counter.note_unused(
+                    reserved, inv_no, "instalment plans conflicted")
+            return
 
         # Resolve the output path (and any collision) on the main thread, before
         # the worker starts, because the collision prompt is a UI decision.
@@ -1404,6 +1627,8 @@ class ReceiptApp:
         if data["date_str"]:
             self.date.set(data["date_str"])
 
+        self.order_plan = data.get("installment") or {}
+        self.refresh_order_plan_label()
         for child in self.items_tree.get_children():
             self.items_tree.delete(child)
         for item in data["items"]:

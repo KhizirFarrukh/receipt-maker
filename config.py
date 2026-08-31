@@ -241,6 +241,13 @@ DEFAULT_APP_SETTINGS = {
     # merely untidy. Stock is committed *after* the receipt exists, because it
     # should record that goods actually left -- a failed render means nothing
     # left, so nothing should be deducted.
+    # Pay a deposit now and the rest monthly. Off by default: a shop that
+    # never offers a plan should not be asked about one on every receipt.
+    # The cash price stays the receipt total -- the plan is shown beside it,
+    # because the tax rows apply to the goods, not to financing them.
+    "installments": {
+        "enabled": False,
+    },
     "inventory": {
         "track_stock": False,
     },
@@ -403,6 +410,10 @@ DEFAULT_STRINGS = {
         "taxes": "Taxes",
         "discounts": "Discounts",
         "shipping": "Shipping Fees",
+        "installment_down": "Down payment",
+        "installment_monthly": "Monthly payment",
+        "installment_total": "Total if paid in instalments",
+        "installment_note": "Instalment plan",
         # Appended to a tax row when tax.mode is "inclusive", so a reader can
         # see why the tax figure is not added into the total.
         "included_suffix": " (included)",
@@ -750,6 +761,12 @@ def validate(settings, filename=None):
             "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
     if not isinstance(render.get("keep_rows_whole", True), bool):
         raise ConfigError("must be true or false", filename, "render.keep_rows_whole")
+
+    installments = settings.get("installments")
+    if not isinstance(installments, dict):
+        raise ConfigError("must be an object", filename, "installments")
+    if not isinstance(installments.get("enabled", False), bool):
+        raise ConfigError("must be true or false", filename, "installments.enabled")
 
     inventory = settings.get("inventory")
     if not isinstance(inventory, dict):

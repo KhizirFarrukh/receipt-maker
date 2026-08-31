@@ -455,8 +455,10 @@ class CustomFieldReachesGeneration(unittest.TestCase):
             app._run_generation = lambda d, out, reserved=None: captured.update(data=d)
             app._claim_invoice_number = lambda typed: (typed, None)
 
-            app.items_tree.configure(
-                columns=[f["key"] for f in app.input_fields] + ["warranty"])
+            # Ask the app for its column order rather than rebuilding it here.
+            # tree_keys() owns that ordering (ARCHITECTURE invariant 11), and a
+            # hand-written copy silently drifts the moment a key is added.
+            app.items_tree.configure(columns=app.tree_keys())
             app.items_tree.insert("", tk.END, values=app.item_to_row({
                 "sku": "A1", "bay": "B-12", "desc": "Thing", "serial": "S",
                 "qty": "2", "price": "10.00", "discount": "0", "tax": "0",

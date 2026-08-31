@@ -611,12 +611,13 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
         tax_config=settings.get("tax"),
         fields=config.load_fields(),
         keep_rows_whole=settings.get("render", {}).get("keep_rows_whole", True),
+        show_installments=settings.get("installments", {}).get("enabled", False),
     )
 
 
 def render_receipt(data, templates, resource_base="", font_faces="", strings=None,
                    currency=None, terms=True, tax_config=None, fields=None,
-                   keep_rows_whole=True):
+                   keep_rows_whole=True, show_installments=False):
     """Pure render: (data, templates, strings, currency) -> html.
 
     No clock, no IO, no globals. Everything non-deterministic (the resource base
@@ -653,7 +654,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
         cells = "".join(
             _block(templates, "item_row_cell.html",
                    _cell_context(item, field, empty_cell, currency, group_lines,
-                                 strings, none_warranty))
+                                 strings, none_warranty, show_installments))
             for field in columns
         )
         rows.append(f"<tr>{cells}</tr>")
@@ -700,6 +701,35 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
             _block(templates, "totals_row.html", {"label": label, "amount": amount})
             for label, amount in breakdown
         )
+
+    # The instalment plan, shown *beside* the cash total rather than replacing
+    # it. The tax rows above apply to the goods; financing them is a separate
+    # arrangement, so the TOTAL stays what the goods cost and the plan is
+    # disclosed in full underneath. See installments.py.
+    if show_installments:
+        import installments
+        scope, plan_rows, plan_totals = installments.collect(
+            {"items": items, installments.PLAN_KEY: data.get(installments.PLAN_KEY)},
+            items, decimals)
+        if plan_rows:
+            plan_breakdown = []
+            if plan_totals["down"]:
+                plan_breakdown.append(
+                    (totals_labels.get("installment_down", "Down payment"),
+                     format_amount(plan_totals["down"], currency)))
+            if plan_totals["monthly"]:
+                months = plan_totals["months"]
+                label = totals_labels.get("installment_monthly", "Monthly payment")
+                plan_breakdown.append(
+                    (f"{label} × {months}" if months else label,
+                     format_amount(plan_totals["monthly"], currency)))
+            plan_breakdown.append(
+                (totals_labels.get("installment_total", "Total if paid in instalments"),
+                 format_amount(plan_totals["financed"], currency)))
+            totals_rows += "".join(
+                _block(templates, "totals_row.html", {"label": label, "amount": amount})
+                for label, amount in plan_breakdown
+            )
 
     # --- assemble -------------------------------------------------------
     receipt_type = data.get("receipt_type", "")
@@ -909,7 +939,8 @@ def visible_columns(fields, items, decimals):
 
 
 def _cell_context(item, field, empty_cell="-", currency=None, group=True,
-                  strings=None, none_warranty=NO_WARRANTY_LABEL):
+                  strings=None, none_warranty=NO_WARRANTY_LABEL,
+                  show_installments=False):
     """Precompute one cell's finished strings -- templates make no decisions."""
     currency = currency or {}
     strings = strings or {}
@@ -951,6 +982,17 @@ def _cell_context(item, field, empty_cell="-", currency=None, group=True,
         warranty = str(item.get("warranty", "") or "")
         if warranty and warranty != none_warranty:
             note = warranty
+        # A line's own instalment plan belongs with the line, not in a column:
+        # it is a sentence, and it only applies to this one item.
+        if show_installments:
+            import installments
+            plan = installments.describe(
+                item.get(installments.PLAN_KEY),
+                lambda value: format_amount(value, currency, group))
+            if plan:
+                label = strings.get("totals", {}).get("installment_note",
+                                                      "Instalment plan")
+                note = f"{note} · {label}: {plan}" if note else f"{label}: {plan}"
 
     return {"value": value, "css_class": _css_class(field), "note": note}
 

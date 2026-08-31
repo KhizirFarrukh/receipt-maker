@@ -169,5 +169,89 @@ class CancelledSaveLeavesAnExplainedGap(unittest.TestCase):
         self.assertEqual(invoice_counter.peek("W"), number + 1)
 
 
+class WindowsLockContention(unittest.TestCase):
+    """A contended lock on Windows raises EACCES, not EEXIST.
+
+    Found as a test failing roughly one run in ten, which looked like flakiness
+    and was not: `os.open(O_CREAT|O_EXCL)` racing another process's *delete* of
+    the same name fails on Windows with a permission error rather than "already
+    exists". The retry loop only caught EEXIST, so a lock hand-off that was
+    working exactly as designed surfaced to the user as "Could not lock the
+    invoice counter" and cost them the receipt they were saving.
+    """
+
+    def setUp(self):
+        self._app_dir = config.APP_DIR
+        self.dir = tempfile.mkdtemp(prefix="rm-regress-lock-")
+        os.makedirs(os.path.join(self.dir, "invoices"), exist_ok=True)
+        config.set_app_dir(self.dir)
+
+    def tearDown(self):
+        config.set_app_dir(self._app_dir)
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_a_permission_error_is_retried_not_surfaced(self):
+        import errno
+        real_open = os.open
+        calls = {"n": 0}
+
+        def flaky_open(path, flags, *args):
+            if str(path).endswith(".lock"):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            return real_open(path, flags, *args)
+
+        os.open = flaky_open
+        try:
+            number = invoice_counter.reserve("W")
+        finally:
+            os.open = real_open
+
+        self.assertEqual(number, config.INVOICE_START_NUMBER)
+        self.assertGreater(calls["n"], 1, "the failed attempt should have been retried")
+
+    def test_a_permanent_permission_problem_still_reports_the_real_error(self):
+        """Retrying must not turn a read-only folder into "close the other copy"."""
+        import errno
+        real_open = os.open
+
+        def always_denied(path, flags, *args):
+            if str(path).endswith(".lock"):
+                raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            return real_open(path, flags, *args)
+
+        os.open = always_denied
+        try:
+            with self.assertRaises(invoice_counter.CounterError) as ctx:
+                invoice_counter._FileLock(
+                    os.path.join(self.dir, "invoices", "c.json.lock"),
+                    timeout=0.2).__enter__()
+        finally:
+            os.open = real_open
+
+        message = str(ctx.exception)
+        self.assertIn("Permission denied", message)
+        self.assertNotIn("Another copy", message,
+                         "a permission problem must not be blamed on a second instance")
+
+    def test_a_genuinely_fatal_error_is_not_retried(self):
+        import errno
+        real_open = os.open
+
+        def broken(path, flags, *args):
+            if str(path).endswith(".lock"):
+                raise OSError(errno.ENOSPC, "No space left on device", str(path))
+            return real_open(path, flags, *args)
+
+        os.open = broken
+        try:
+            with self.assertRaises(invoice_counter.CounterError) as ctx:
+                invoice_counter.reserve("W")
+        finally:
+            os.open = real_open
+        self.assertIn("No space", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
