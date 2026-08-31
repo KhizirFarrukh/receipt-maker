@@ -94,7 +94,8 @@ or the filesystem inside it — inject those from `build_html`.
 
 ## The test suite
 
-**698 tests, 88.0% coverage**, floor enforced at 80% by `.coveragerc`. Branch coverage is on.
+**838 tests, 92.3% coverage**, floor enforced at 80% by `.coveragerc`. Branch coverage is on.
+HANDOFF.md breaks down what the uncovered remainder is and why.
 
 | File | Covers |
 |---|---|
@@ -107,6 +108,7 @@ or the filesystem inside it — inject those from `build_html`.
 | `test_history.py`, `test_products.py` | Receipt history; catalogue, variants, pricing |
 | `test_cli.py` | `cli.py`, `keygen.py`, `verify_receipt.py` — exit codes are the contract |
 | `test_gui_dialogs.py`, `test_gui_main.py`, `test_gui_internals.py` | The GUI, driven headlessly |
+| `test_edges.py` | The branches the per-feature files miss: parse failures, odd inputs |
 | `test_regressions.py` | One test per bug found, saying what it protects |
 | `gate_env.py` | Shared setup that pins tests to the fixture config |
 

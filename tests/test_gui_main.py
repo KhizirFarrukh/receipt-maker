@@ -197,6 +197,48 @@ class DatePicker(MainTestCase):
         self.app.change_date_picker_month(frame, 2026, 1, -1, date(2026, 1, 1))
         self.app.close_date_picker()
 
+    def day_labels(self, selected):
+        """Every day-button caption on the calendar showing `selected`'s month."""
+        self.app.show_date_picker()
+        frame = self.app.date_picker.winfo_children()[0]
+        self.app.change_date_picker_month(
+            frame, selected.year, selected.month, 0, selected)
+        frame = self.app.date_picker.winfo_children()[0]
+        captions = []
+        for child in frame.winfo_children():
+            try:
+                captions.append(str(child.cget("text")))
+            except tk.TclError:
+                pass
+        self.app.close_date_picker()
+        return captions
+
+    def test_today_is_marked_when_it_is_not_the_selected_day(self):
+        """Two different marks, so neither hides the other."""
+        from datetime import date
+        today = date.today()
+        other = today.replace(day=2 if today.day != 2 else 3)
+        captions = self.day_labels(other)
+        self.assertIn(f"*{today.day}*", captions,
+                      "today should be starred when a different day is selected")
+        self.assertIn(f"[{other.day}]", captions,
+                      "the selected day should be bracketed")
+
+    def test_the_selected_day_wins_when_it_is_also_today(self):
+        """Selected takes priority -- one mark, not both."""
+        from datetime import date
+        today = date.today()
+        captions = self.day_labels(today)
+        self.assertIn(f"[{today.day}]", captions)
+        self.assertNotIn(f"*{today.day}*", captions)
+
+    def test_a_month_that_is_not_this_one_stars_nothing(self):
+        from datetime import date
+        far = date(2030, 6, 15)
+        captions = self.day_labels(far)
+        self.assertFalse([c for c in captions if c.startswith("*")],
+                         "no day in a different month is today")
+
     def test_parsing_accepts_several_formats(self):
         for text in ("31 Jan 2026", "2026-01-31", "31/01/2026"):
             self.app.date.set(text)

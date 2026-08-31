@@ -119,13 +119,28 @@ Remove-Item -LiteralPath "tests\fixtures\env\Templates" -Recurse -Force -ErrorAc
 & $py -m coverage html             # browsable report in htmlcov/
 ```
 
-**698 tests, 88.0% coverage** at the time of writing, with a floor of 80% enforced by
-`.coveragerc`. Per-module, the lowest is `receipt_signing` at 81.4%; `keygen` and
-`verify_receipt` are at 100%. Branch coverage is on, so an untested `else` counts as a miss.
+**838 tests, 92.3% coverage** at the time of writing, with a floor of 80% enforced by
+`.coveragerc`. Branch coverage is on, so an untested `else` counts as a miss. `template_engine`,
+`keygen` and `verify_receipt` are at 100%; the lowest is `invoice_counter` at 86.6%.
 
-What is deliberately *not* covered: the `if __name__ == "__main__"` blocks, `except ImportError`
-fallbacks for absent optional packages, and a handful of defensive `except OSError` paths that
-only fire on a failing disk. Those are listed in `.coveragerc`'s `exclude_lines`.
+### What the remaining ~8% actually is
+
+This was audited line by line rather than assumed — an earlier version of this file called the
+gap "mostly defensive", and that was **wrong**: it was hiding real holes, including
+`load_pkcs12_file`, a README-documented feature (`.pfx`/`.p12` import) with *zero* coverage.
+Those are now tested. What is left, by inspection of every uncovered line:
+
+| Kind | Where | Why it is not covered |
+|---|---|---|
+| `except OSError` / `JSONDecodeError` rescue paths | most of `config.py`, `invoice_counter.py` | Need a disk that fails mid-write. The recovery is one line — log and fall back. |
+| `except tk.TclError`, `except queue.Empty` | `main.py` | Fire only when the interpreter is being torn down under a real event loop. |
+| macOS and Linux "open containing folder" | `main.py`, `settings_ui.py` | `sys.platform` branches that cannot run on the target OS. |
+| `root.mainloop()`, `if __name__ == "__main__"` | entry points | Need a real display. |
+| The real Playwright launch, the real `sign_pdf` | `receipt_service.py` 209-213, 77-85 | Covered by `main.py --smoke-test`, which drives a real browser; the unit suite stubs them so it stays fast and offline. |
+| Two-line wrappers (`open_settings(parent)` and friends) | `settings_ui.py` | The dialogs they construct are each tested directly. |
+
+Treat that table as a judgement, not a proof. If you are about to change one of those lines,
+it has no test holding it — write one first.
 
 The **golden gate** is the load-bearing check. `tests/fixtures/golden.html` is the receipt HTML
 rendered from a pinned fixture, compared byte for byte. It stayed identical through Stages 2–5 and

@@ -83,6 +83,24 @@ are testing.**
 
 ---
 
+### `cget()` does not return a string
+
+`widget.cget("foreground")` returns a Tcl colour object, not `str`. `assertEqual(..., "#b91c1c")`
+fails against it with the baffling message `<color object: '#b91c1c'> != '#b91c1c'`. Wrap it:
+`str(widget.cget("foreground"))`. The same applies to any option Tk hands back as a typed object.
+
+### The fixture's currency is the migrated one, not the default
+
+`tests/fixtures/env/appsettings.json` has been through migration, so its currency symbol is
+`Rs.`, not the neutral default a fresh `default_app_settings()` produces. Three tests were written
+asserting the default and failed on the fixture. Read the fixture before asserting a config value.
+
+### Patch a hook that runs *inside* the code path you are testing
+
+A test patched `build_page_header_template` to raise, expecting the caller's `except` to catch it —
+but that call happens *before* the `try` block, so the exception escaped. Check where the seam
+actually sits relative to the guard you want to exercise.
+
 ## The golden gate
 
 ### The fixture caches templates

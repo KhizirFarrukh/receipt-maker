@@ -348,6 +348,56 @@ class SigningKeysDialogBehaviour(DialogTestCase):
         self.assertEqual(open(dialog.cert_path, "rb").read(), original)
         dialog.win.destroy()
 
+    def stub_certificate(self, days_left):
+        """Report a certificate `days_left` from expiry, without waiting a year."""
+        import receipt_signing, datetime
+        real = receipt_signing.certificate_info
+
+        def fake(path):
+            info = real(path)
+            if info is None:
+                return None
+            info = dict(info)
+            info["days_left"] = days_left
+            info["expired"] = days_left < 0
+            info["not_after"] = (datetime.datetime.now()
+                                 + datetime.timedelta(days=days_left))
+            return info
+
+        receipt_signing.certificate_info = fake
+        self.addCleanup(setattr, receipt_signing, "certificate_info", real)
+
+    def test_an_expired_certificate_is_called_out_in_red(self):
+        """Receipts signed with it still verify, but new ones should not use it."""
+        dialog = self.dialog()
+        dialog.create()
+        self.stub_certificate(days_left=-3)
+        dialog.refresh()
+        self.assertIn("EXPIRED on", dialog.status.cget("text"))
+        self.assertEqual(str(dialog.status.cget("foreground")), "#b91c1c")
+        dialog.win.destroy()
+
+    def test_a_certificate_near_expiry_warns_before_it_lapses(self):
+        dialog = self.dialog()
+        dialog.create()
+        self.stub_certificate(days_left=30)
+        dialog.refresh()
+        text = dialog.status.cget("text")
+        self.assertIn("Expires", text)
+        self.assertIn("30 days left", text)
+        self.assertEqual(str(dialog.status.cget("foreground")), "#b45309")
+        dialog.win.destroy()
+
+    def test_a_certificate_well_short_of_expiry_stays_green(self):
+        """The boundary is 60 days; 60 itself must not warn."""
+        dialog = self.dialog()
+        dialog.create()
+        self.stub_certificate(days_left=60)
+        dialog.refresh()
+        self.assertIn("Valid until", dialog.status.cget("text"))
+        self.assertEqual(str(dialog.status.cget("foreground")), "#166534")
+        dialog.win.destroy()
+
     def test_a_broken_certificate_is_reported(self):
         dialog = self.dialog()
         dialog.create()
@@ -395,6 +445,217 @@ class SigningKeysDialogBehaviour(DialogTestCase):
         dialog.import_key()
         self.assertTrue(any("certificate, not a private key" in m for m in self.errors))
         dialog.win.destroy()
+
+
+class PassphrasePrompt(DialogTestCase):
+    """Used once, in memory, never stored — so it needs its own dialog."""
+
+    def prompt(self, action):
+        """Build the dialog, run `action` against it, return the result."""
+        result = {}
+
+        def drive(dialog):
+            action(dialog)
+
+        self.root.wait_window = lambda win: drive(win)
+        result["value"] = settings_ui._ask_passphrase(self.root)
+        return result["value"]
+
+    def find_button(self, dialog, label):
+        for frame in dialog.winfo_children():
+            for child in frame.winfo_children():
+                for widget in [child] + list(getattr(child, "winfo_children",
+                                                     lambda: [])()):
+                    try:
+                        if str(widget.cget("text")) == label:
+                            return widget
+                    except tk.TclError:
+                        pass
+        return None
+
+    def test_cancelling_returns_nothing(self):
+        value = self.prompt(lambda dialog: self.find_button(dialog, "Cancel").invoke())
+        self.assertIsNone(value)
+
+    def test_confirming_returns_what_was_typed(self):
+        def action(dialog):
+            for frame in dialog.winfo_children():
+                for child in frame.winfo_children():
+                    if isinstance(child, type(tk.Entry(dialog))) or "entry" in str(child):
+                        try:
+                            child.insert(0, "s3cret")
+                        except tk.TclError:
+                            pass
+            self.find_button(dialog, "OK").invoke()
+
+        self.assertEqual(self.prompt(action), "s3cret")
+
+    def test_the_input_is_masked(self):
+        masked = {}
+
+        def action(dialog):
+            for frame in dialog.winfo_children():
+                for child in frame.winfo_children():
+                    try:
+                        if child.cget("show"):
+                            masked["yes"] = True
+                    except tk.TclError:
+                        pass
+            self.find_button(dialog, "Cancel").invoke()
+
+        self.prompt(action)
+        self.assertTrue(masked.get("yes"), "a passphrase box must not show its text")
+
+
+class BrowseButtons(DialogTestCase):
+    """The Browse callback is what makes the logo.png.png problem unrepeatable."""
+
+    def build_path_row(self, chosen):
+        settings_ui.filedialog.askopenfilename = lambda **k: chosen
+        frame = tk.Frame(self.root)
+        variables = {}
+        settings_ui.build_row(frame, 0, "company.logo_path", "Logo", "path",
+                              {"filetypes": [("Images", "*.png")]}, "", variables)
+        for child in frame.winfo_children():
+            for widget in getattr(child, "winfo_children", lambda: [])():
+                try:
+                    if "Browse" in str(widget.cget("text")):
+                        widget.invoke()
+                except tk.TclError:
+                    pass
+        return variables["company.logo_path"][1].get()
+
+    def test_a_file_inside_the_app_folder_is_stored_relatively(self):
+        """Keeps a config portable between machines."""
+        chosen = os.path.join(self.dir, "logo.png")
+        self.assertEqual(self.build_path_row(chosen), "logo.png")
+
+    def test_a_nested_file_keeps_forward_slashes(self):
+        nested = os.path.join(self.dir, "assets", "logo.png")
+        self.assertEqual(self.build_path_row(nested), "assets/logo.png")
+
+    def test_a_file_outside_the_app_folder_stays_absolute(self):
+        outside = os.path.join(tempfile.gettempdir(), "elsewhere", "logo.png")
+        self.assertEqual(self.build_path_row(outside), outside)
+
+    def test_cancelling_the_browse_leaves_the_value_alone(self):
+        self.assertEqual(self.build_path_row(""), "")
+
+
+class RecordSubDialog(DialogTestCase):
+    COLUMNS = [("label", "Label", "text", {}), ("on", "On", "bool", {})]
+
+    def editor(self, records=None):
+        return settings_ui.RecordListEditor(self.root, "Rows", self.COLUMNS,
+                                            records or [])
+
+    def click(self, dialog, label):
+        for frame in dialog.winfo_children():
+            for child in frame.winfo_children():
+                for widget in [child] + list(getattr(child, "winfo_children",
+                                                     lambda: [])()):
+                    try:
+                        if str(widget.cget("text")) == label:
+                            widget.invoke()
+                            return True
+                    except tk.TclError:
+                        pass
+        return False
+
+    def test_adding_a_row_through_the_sub_dialog(self):
+        editor = self.editor()
+        self.root.wait_window = lambda win: self.click(win, "OK")
+        editor.add()
+        self.assertEqual(len(editor.records), 1)
+
+    def test_cancelling_the_sub_dialog_adds_nothing(self):
+        editor = self.editor()
+        self.root.wait_window = lambda win: self.click(win, "Cancel")
+        editor.add()
+        self.assertEqual(editor.records, [])
+
+    def test_editing_an_existing_row(self):
+        editor = self.editor([{"label": "One", "on": False}])
+        editor.tree.selection_set(editor.tree.get_children()[0])
+        self.root.wait_window = lambda win: self.click(win, "OK")
+        editor.edit()
+        self.assertEqual(len(editor.records), 1)
+
+
+class ProductsDialogConflicts(DialogTestCase):
+    def test_a_concurrent_edit_offers_a_choice(self):
+        import product_catalogue as pc
+        pc.save({config.SCHEMA_VERSION_KEY: 1, "products": [{"sku": "A", "name": "A"}]})
+        dialog = settings_ui.ProductsDialog(self.root)
+
+        # Someone edits the file while the window is open.
+        pc.save({config.SCHEMA_VERSION_KEY: 1, "products": [{"sku": "B", "name": "B"}]})
+        os.utime(pc.catalogue_path(),
+                 (config.file_mtime(pc.catalogue_path()) + 5,) * 2)
+
+        settings_ui.messagebox.askyesno = lambda *a, **k: False    # decline
+        dialog.save()
+        self.assertEqual(pc.load()["products"][0]["sku"], "B",
+                         "declining must leave the other edit intact")
+        dialog.win.destroy()
+
+    def test_accepting_the_overwrite_saves_anyway(self):
+        import product_catalogue as pc
+        pc.save({config.SCHEMA_VERSION_KEY: 1, "products": [{"sku": "A", "name": "A"}]})
+        dialog = settings_ui.ProductsDialog(self.root)
+        pc.save({config.SCHEMA_VERSION_KEY: 1, "products": [{"sku": "B", "name": "B"}]})
+        os.utime(pc.catalogue_path(),
+                 (config.file_mtime(pc.catalogue_path()) + 5,) * 2)
+
+        settings_ui.messagebox.askyesno = lambda *a, **k: True     # overwrite
+        dialog.save()
+        self.assertEqual(pc.load()["products"][0]["sku"], "A")
+
+    def test_a_non_numeric_stock_is_left_for_validate_to_refuse(self):
+        dialog = settings_ui.ProductsDialog(self.root)
+        dialog.editor.records.append(
+            {"sku": "A", "name": "A", "stock_count": "many"})
+        dialog.save()
+        self.assertTrue(any("whole number" in m for m in self.errors))
+        dialog.win.destroy()
+
+
+class FieldsDialogConflicts(DialogTestCase):
+    def test_a_concurrent_edit_offers_a_choice(self):
+        dialog = settings_ui.FieldsDialog(self.root)
+        fields = config.load_fields()
+        config.save_fields(fields)
+        os.utime(config.fields_file(),
+                 (config.file_mtime(config.fields_file()) + 5,) * 2)
+
+        settings_ui.messagebox.askyesno = lambda *a, **k: False
+        dialog.save()
+        self.assertTrue(dialog.win.winfo_exists(), "declining should keep the window")
+        dialog.win.destroy()
+
+    def test_the_saved_callback_fires(self):
+        fired = []
+        dialog = settings_ui.FieldsDialog(self.root, on_saved=lambda: fired.append(1))
+        dialog.save()
+        self.assertEqual(fired, [1])
+
+
+class SettingsDialogRemainder(DialogTestCase):
+    def test_the_saved_callback_fires(self):
+        fired = []
+        dialog = settings_ui.SettingsDialog(self.root, on_saved=lambda: fired.append(1))
+        dialog.save()
+        self.assertEqual(fired, [1])
+
+    def test_accepting_an_overwrite_on_conflict(self):
+        dialog = settings_ui.SettingsDialog(self.root)
+        config.update_app_settings({"company": {"name": "Edited Elsewhere"}})
+        os.utime(config.APP_SETTINGS_FILE,
+                 (config.file_mtime(config.APP_SETTINGS_FILE) + 5,) * 2)
+        settings_ui.messagebox.askyesno = lambda *a, **k: True
+        dialog.variables["company.phone"][1].set("555-0100")
+        dialog.save()
+        self.assertEqual(config.load_app_settings()["company"]["phone"], "555-0100")
 
 
 class FormHelpers(DialogTestCase):

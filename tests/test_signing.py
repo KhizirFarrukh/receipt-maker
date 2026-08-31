@@ -251,6 +251,194 @@ class ImportFormats(SigningTestCase):
         self.assertIn("2048", str(ctx.exception))
 
 
+class Pkcs12Bundles(SigningTestCase):
+    """`.pfx`/`.p12` import — documented in the README, so it must actually work."""
+
+    def bundle(self, name="bundle.pfx", passphrase=None, with_cert=True):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.serialization import pkcs12
+
+        key_path, cert_path = self.new_key("src")
+        key = receipt_signing.load_private_key_file(key_path)
+        cert = receipt_signing._load_certificate_file(cert_path)
+        encryption = (serialization.BestAvailableEncryption(passphrase.encode())
+                      if passphrase else serialization.NoEncryption())
+        data = pkcs12.serialize_key_and_certificates(
+            b"receipt", key, cert if with_cert else None, None, encryption)
+        path = os.path.join(self.dir, name)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    def test_an_unencrypted_bundle_loads(self):
+        key, cert = receipt_signing.load_pkcs12_file(self.bundle())
+        self.assertIsNotNone(key)
+        self.assertIsNotNone(cert)
+
+    def test_an_encrypted_bundle_loads_with_its_passphrase(self):
+        path = self.bundle("locked.pfx", passphrase="s3cret")
+        key, _cert = receipt_signing.load_pkcs12_file(path, passphrase="s3cret")
+        self.assertIsNotNone(key)
+
+    def test_an_encrypted_bundle_without_a_passphrase_says_so(self):
+        path = self.bundle("locked.pfx", passphrase="s3cret")
+        with self.assertRaises(receipt_signing.KeyImportError) as ctx:
+            receipt_signing.load_pkcs12_file(path)
+        self.assertIn("passphrase", str(ctx.exception).lower())
+
+    def test_a_wrong_passphrase_says_so_differently(self):
+        path = self.bundle("locked.pfx", passphrase="s3cret")
+        with self.assertRaises(receipt_signing.KeyImportError) as ctx:
+            receipt_signing.load_pkcs12_file(path, passphrase="wrong")
+        self.assertIn("did not open", str(ctx.exception))
+
+    def test_a_missing_bundle_file_is_reported(self):
+        with self.assertRaises(receipt_signing.KeyImportError) as ctx:
+            receipt_signing.load_pkcs12_file(os.path.join(self.dir, "nope.pfx"))
+        self.assertIn("Could not read", str(ctx.exception))
+
+    def test_a_bundle_that_is_not_pkcs12_is_reported(self):
+        junk = os.path.join(self.dir, "junk.pfx")
+        with open(junk, "wb") as f:
+            f.write(b"not a bundle")
+        with self.assertRaises(receipt_signing.KeyImportError) as ctx:
+            receipt_signing.load_pkcs12_file(junk)
+        self.assertIn("PKCS#12", str(ctx.exception))
+
+    def test_importing_a_pfx_uses_the_certificate_inside_it(self):
+        """The bundle carries its own certificate; do not derive a new one."""
+        path = self.bundle("with_cert.pfx")
+        receipt_signing.import_key_pair(path, self.key, self.cert, force=True)
+        info = receipt_signing.certificate_info(self.cert)
+        self.assertIn("Acme Ltd", info["subject"], "the bundled certificate should win")
+
+    def test_a_pfx_import_produces_a_working_signature(self):
+        path = self.bundle("working.pfx")
+        receipt_signing.import_key_pair(path, self.key, self.cert, force=True)
+        signed = self.signed_pdf(self.key, self.cert)
+        self.assertEqual(receipt_signing.verify_pdf(signed, self.cert).status,
+                         receipt_signing.VERIFIED)
+
+    def test_an_encrypted_pfx_can_be_imported(self):
+        path = self.bundle("enc.pfx", passphrase="s3cret")
+        receipt_signing.import_key_pair(path, self.key, self.cert,
+                                        passphrase="s3cret", force=True)
+        self.assertTrue(os.path.isfile(self.key))
+
+
+class EllipticCurveKeys(SigningTestCase):
+    """The error message offers "an RSA or an EC key", so EC must work."""
+
+    def ec_key_file(self, name="ec.pem"):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        key = ec.generate_private_key(ec.SECP256R1())
+        path = os.path.join(self.dir, name)
+        with open(path, "wb") as f:
+            f.write(key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()))
+        return path
+
+    def test_an_ec_key_is_accepted(self):
+        key = receipt_signing.load_private_key_file(self.ec_key_file())
+        algorithm, bits = receipt_signing._describe_key(key)
+        self.assertEqual(algorithm, "EC")
+        self.assertEqual(bits, 256)
+
+    def test_an_ec_key_can_be_imported(self):
+        receipt_signing.import_key_pair(self.ec_key_file(), self.key, self.cert,
+                                        org_name="Acme", force=True)
+        self.assertTrue(os.path.isfile(self.cert))
+
+    def test_an_unsupported_key_type_names_what_is_supported(self):
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        with self.assertRaises(receipt_signing.KeyImportError) as ctx:
+            receipt_signing._describe_key(ed25519.Ed25519PrivateKey.generate())
+        self.assertIn("RSA or an EC", str(ctx.exception))
+
+
+class Timestamping(SigningTestCase):
+    """tsa_url is offered in the settings, so its failure path must be sane."""
+
+    def test_an_unreachable_timestamp_server_names_the_timestamp_server(self):
+        """The failure has to point at the TSA, not read as a generic signing fault.
+
+        Note where it surfaces: HTTPTimeStamper *constructs* happily with a bad
+        URL and only fails when it is used, so the guard around the constructor
+        does not fire here. What the user actually sees is the signing error, and
+        the guarantee worth pinning is that it still says "timestamp server".
+        """
+        receipt_signing.generate_key_pair(self.key, self.cert, org_name="Acme")
+        path = blank_pdf(os.path.join(self.dir, "doc.pdf"))
+        with self.assertRaises(RuntimeError) as ctx:
+            receipt_signing.sign_pdf(path, self.key, self.cert, tsa_url="not-a-url")
+        self.assertIn("timestamp server", str(ctx.exception).lower())
+
+    def test_a_failed_timestamp_leaves_no_partial_file(self):
+        receipt_signing.generate_key_pair(self.key, self.cert, org_name="Acme")
+        path = blank_pdf(os.path.join(self.dir, "doc.pdf"))
+        with self.assertRaises(RuntimeError):
+            receipt_signing.sign_pdf(path, self.key, self.cert, tsa_url="not-a-url")
+        self.assertFalse(os.path.exists(path + ".signing.tmp"))
+
+    def test_a_timestamper_that_cannot_be_built_is_reported_as_such(self):
+        """The constructor guard, exercised directly."""
+        import pyhanko.sign.timestamps as timestamps
+
+        original = timestamps.HTTPTimeStamper
+        try:
+            timestamps.HTTPTimeStamper = lambda url: (_ for _ in ()).throw(
+                ValueError("nope"))
+            receipt_signing.generate_key_pair(self.key, self.cert, org_name="Acme")
+            path = blank_pdf(os.path.join(self.dir, "doc.pdf"))
+            with self.assertRaises(RuntimeError) as ctx:
+                receipt_signing.sign_pdf(path, self.key, self.cert,
+                                         tsa_url="https://tsa.example")
+            self.assertIn("timestamp authority", str(ctx.exception))
+        finally:
+            timestamps.HTTPTimeStamper = original
+
+    def test_signing_metadata_is_carried_through(self):
+        receipt_signing.generate_key_pair(self.key, self.cert, org_name="Acme")
+        path = blank_pdf(os.path.join(self.dir, "doc.pdf"))
+        receipt_signing.sign_pdf(path, self.key, self.cert,
+                                 reason="Receipt authenticity", location="Karachi",
+                                 name="Acme Ltd")
+        result = receipt_signing.verify_pdf(path, self.cert)
+        self.assertEqual(result.status, receipt_signing.VERIFIED)
+        self.assertIn("Receipt authenticity", result.reason)
+        self.assertIn("Karachi", result.location)
+
+
+class EncryptedKeyRoundTrip(SigningTestCase):
+    def test_a_passphrase_protected_key_signs_after_import(self):
+        source, _ = self.new_key("locked", passphrase="s3cret")
+        receipt_signing.import_key_pair(source, self.key, self.cert,
+                                        passphrase="s3cret", org_name="Acme",
+                                        force=True)
+        signed = self.signed_pdf(self.key, self.cert)
+        self.assertEqual(receipt_signing.verify_pdf(signed, self.cert).status,
+                         receipt_signing.VERIFIED)
+
+    def test_signing_with_an_encrypted_key_and_its_passphrase(self):
+        key, cert = self.new_key("locked", passphrase="s3cret")
+        path = blank_pdf(os.path.join(self.dir, "doc.pdf"))
+        receipt_signing.sign_pdf(path, key, cert, passphrase="s3cret")
+        self.assertEqual(receipt_signing.verify_pdf(path, cert).status,
+                         receipt_signing.VERIFIED)
+
+    def test_signing_with_the_wrong_passphrase_is_a_clear_error(self):
+        key, cert = self.new_key("locked", passphrase="s3cret")
+        path = blank_pdf(os.path.join(self.dir, "doc.pdf"))
+        with self.assertRaises(RuntimeError) as ctx:
+            receipt_signing.sign_pdf(path, key, cert, passphrase="wrong")
+        self.assertIn("Could not load", str(ctx.exception))
+
+
 class CertificateInspection(SigningTestCase):
     def test_missing_certificate_reads_as_none(self):
         self.assertIsNone(receipt_signing.certificate_info(self.cert))

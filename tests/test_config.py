@@ -193,6 +193,220 @@ class Validate(unittest.TestCase):
         self.assertIn("company.name", str(err))
 
 
+class EveryValidationCase(unittest.TestCase):
+    """One test per rejection `validate()` can produce.
+
+    The plan asks for "every validate case raises the right ConfigError". These
+    are the cases that were still unexercised: each names the key it guards, so
+    a message that stops naming the right key fails here rather than confusing
+    someone at a till.
+    """
+
+    def reject(self, key, mutate):
+        settings = config.default_app_settings()
+        mutate(settings)
+        with self.assertRaises(config.ConfigError,
+                               msg=f"{key} should have been rejected") as ctx:
+            config.validate(settings, "appsettings.json")
+        self.assertEqual(ctx.exception.key, key)
+        return ctx.exception
+
+    def accept(self, mutate):
+        settings = config.default_app_settings()
+        mutate(settings)
+        return config.validate(settings, "appsettings.json")
+
+    # -- signing ---------------------------------------------------------
+    def test_signing_must_be_an_object(self):
+        self.reject("signing", lambda s: s.update(signing="nope"))
+
+    def test_each_signing_field_must_be_text(self):
+        for key in ("private_key_path", "certificate_path", "key_passphrase",
+                    "signer_name", "reason", "location", "tsa_url"):
+            self.reject(f"signing.{key}",
+                        lambda s, k=key: s["signing"].update({k: 123}))
+
+    def test_an_enabled_signing_needs_a_certificate_path(self):
+        self.reject("signing.certificate_path",
+                    lambda s: s["signing"].update(certificate_path="  "))
+
+    def test_an_https_tsa_url_is_accepted(self):
+        self.accept(lambda s: s["signing"].update(tsa_url="https://tsa.example"))
+
+    # -- company ---------------------------------------------------------
+    def test_every_company_field_must_be_text(self):
+        for key in ("name", "address", "phone", "email", "logo_path"):
+            self.reject(f"company.{key}",
+                        lambda s, k=key: s["company"].update({k: []}))
+
+    # -- currency --------------------------------------------------------
+    def test_currency_must_be_an_object(self):
+        self.reject("currency", lambda s: s.update(currency=[]))
+
+    def test_currency_symbol_and_code_must_be_text(self):
+        for key in ("symbol", "code"):
+            self.reject(f"currency.{key}",
+                        lambda s, k=key: s["currency"].update({k: 5}))
+
+    def test_currency_flags_must_be_boolean(self):
+        for key in ("symbol_space", "group_line_amounts"):
+            self.reject(f"currency.{key}",
+                        lambda s, k=key: s["currency"].update({k: "yes"}))
+
+    def test_decimals_must_not_be_negative(self):
+        self.reject("currency.decimals", lambda s: s["currency"].update(decimals=-1))
+
+    def test_decimals_must_be_a_whole_number(self):
+        self.reject("currency.decimals", lambda s: s["currency"].update(decimals=2.5))
+
+    def test_decimals_of_zero_and_six_are_the_boundaries(self):
+        self.accept(lambda s: s["currency"].update(decimals=0))
+        self.accept(lambda s: s["currency"].update(decimals=6))
+        self.reject("currency.decimals", lambda s: s["currency"].update(decimals=7))
+
+    def test_symbol_position_must_be_known(self):
+        self.reject("currency.position", lambda s: s["currency"].update(position="middle"))
+
+    # -- document --------------------------------------------------------
+    def test_document_must_be_an_object(self):
+        self.reject("document", lambda s: s.update(document="nope"))
+
+    def test_every_margin_is_checked(self):
+        for key in ("margin_top", "margin_bottom", "margin_left", "margin_right"):
+            self.reject(f"document.{key}",
+                        lambda s, k=key: s["document"].update({k: "wide"}))
+
+    def test_each_css_unit_is_accepted(self):
+        for unit in ("px", "mm", "cm", "in", "pt", "pc"):
+            self.accept(lambda s, u=unit: s["document"].update(margin_top=f"10{u}"))
+
+    # -- render ----------------------------------------------------------
+    def test_render_must_be_an_object(self):
+        self.reject("render", lambda s: s.update(render=None))
+
+    def test_a_negative_timeout_is_refused(self):
+        self.reject("render.timeout_ms", lambda s: s["render"].update(timeout_ms=-1))
+
+    def test_a_boolean_timeout_is_refused(self):
+        """True is an int in Python; it is not a timeout."""
+        self.reject("render.timeout_ms", lambda s: s["render"].update(timeout_ms=True))
+
+    # -- fonts -----------------------------------------------------------
+    def test_fonts_must_be_an_object(self):
+        self.reject("fonts", lambda s: s.update(fonts="Inter"))
+
+    def test_font_names_must_be_text(self):
+        for key in ("family", "fallback"):
+            self.reject(f"fonts.{key}", lambda s, k=key: s["fonts"].update({k: 1}))
+
+    def test_font_files_must_be_a_list_of_paths(self):
+        self.reject("fonts.files", lambda s: s["fonts"].update(files="one.woff2"))
+        self.reject("fonts.files", lambda s: s["fonts"].update(files=[1, 2]))
+
+    def test_a_family_without_files_is_refused(self):
+        """A family that can never load would silently do nothing."""
+        self.reject("fonts.files", lambda s: s["fonts"].update(family="Inter", files=[]))
+
+    # -- links -----------------------------------------------------------
+    def test_links_must_be_an_object(self):
+        self.reject("links", lambda s: s.update(links=[]))
+
+    def test_link_values_must_be_text(self):
+        self.reject("links.terms_url", lambda s: s["links"].update(terms_url=1))
+
+    def test_each_safe_scheme_is_accepted(self):
+        for url in ("http://x.test", "https://x.test", "mailto:a@b.c"):
+            self.accept(lambda s, u=url: s["links"].update(terms_url=u))
+
+    def test_unsafe_schemes_are_refused(self):
+        for url in ("javascript:alert(1)", "file:///etc/passwd", "data:text/html,x"):
+            self.reject("links.terms_url",
+                        lambda s, u=url: s["links"].update(terms_url=u))
+
+    # -- ui / terms / invoice -------------------------------------------
+    def test_ui_must_be_an_object(self):
+        self.reject("ui", lambda s: s.update(ui="yes"))
+
+    def test_terms_page_must_be_an_object(self):
+        self.reject("terms_page", lambda s: s.update(terms_page=True))
+
+    def test_invoice_must_be_an_object(self):
+        self.reject("invoice", lambda s: s.update(invoice="INV-"))
+
+    def test_invoice_prefix_must_be_text(self):
+        self.reject("invoice.prefix", lambda s: s["invoice"].update(prefix=1))
+
+    def test_a_prefix_with_a_path_separator_is_refused(self):
+        for bad in ("INV/", "INV\\", "INV:", "INV*"):
+            self.reject("invoice.prefix",
+                        lambda s, b=bad: s["invoice"].update(prefix=b))
+
+    def test_an_empty_prefix_is_allowed(self):
+        self.accept(lambda s: s["invoice"].update(prefix=""))
+
+    # -- tax -------------------------------------------------------------
+    def test_tax_rows_must_be_a_list(self):
+        self.reject("tax.rows", lambda s: s["tax"].update(rows={}))
+
+    def test_a_tax_row_must_be_an_object(self):
+        self.reject("tax.rows[0]", lambda s: s["tax"].update(rows=["15%"]))
+
+    def test_a_tax_value_must_be_a_number(self):
+        self.reject("tax.rows[0].value", lambda s: s["tax"].update(
+            rows=[{"label": "VAT", "type": "percent", "value": []}]))
+
+    def test_a_non_numeric_tax_string_is_refused(self):
+        self.reject("tax.rows[0].value", lambda s: s["tax"].update(
+            rows=[{"label": "VAT", "type": "percent", "value": "lots"}]))
+
+    def test_a_fixed_tax_row_may_exceed_one_hundred(self):
+        """Only percentages are capped; a fixed levy can be any amount."""
+        self.accept(lambda s: s["tax"].update(
+            rows=[{"label": "Levy", "type": "fixed", "value": 500}]))
+
+    # -- the remaining whole-section guards ------------------------------
+    def test_tax_must_be_an_object(self):
+        """Reached only when the whole section is the wrong shape."""
+        self.reject("tax", lambda s: s.update(tax=[]))
+
+    def test_inventory_must_be_an_object(self):
+        self.reject("inventory", lambda s: s.update(inventory="on"))
+
+    def test_a_tax_row_needs_a_label(self):
+        """An unlabelled row would print a blank line on the receipt."""
+        self.reject("tax.rows[0].label", lambda s: s["tax"].update(
+            rows=[{"label": "  ", "type": "percent", "value": 5}]))
+
+    def test_a_tax_row_type_must_be_known(self):
+        self.reject("tax.rows[0].type", lambda s: s["tax"].update(
+            rows=[{"label": "VAT", "type": "compound", "value": 5}]))
+
+    def test_a_date_format_that_formats_to_nothing_is_refused(self):
+        """`strftime` accepts "%t", but it renders a tab -- a blank date."""
+        error = self.reject("date_format", lambda s: s.update(date_format="%t"))
+        self.assertIn("usable strftime", str(error))
+
+    def test_an_unknown_strftime_directive_is_refused(self):
+        """Caught here rather than blowing up mid-receipt at generation time."""
+        error = self.reject("date_format", lambda s: s.update(date_format="%Q"))
+        self.assertIn("usable strftime", str(error))
+
+    # -- receipt types ---------------------------------------------------
+    def test_receipt_types_must_be_a_list(self):
+        self.reject("receipt_types", lambda s: s.update(receipt_types={}))
+
+    def test_a_receipt_type_must_be_an_object(self):
+        self.reject("receipt_types[0]", lambda s: s.update(receipt_types=["Online"]))
+
+    def test_a_receipt_type_needs_a_label(self):
+        self.reject("receipt_types[0]",
+                    lambda s: s.update(receipt_types=[{"code": "W"}]))
+
+    def test_a_receipt_type_needs_a_code(self):
+        self.reject("receipt_types[0].code",
+                    lambda s: s.update(receipt_types=[{"label": "Online"}]))
+
+
 class AtomicWrites(TempConfig):
     def test_writes_and_reads_back(self):
         config.atomic_write_json(self.path, {"a": 1})
@@ -318,6 +532,54 @@ class FilenameFields(TempConfig):
         self.assertEqual(config.DEFAULT_FILENAME_FIELDS, ["date", "name"],
                          "callers must not be able to mutate the module default")
 
+
+
+class EveryFieldsValidationCase(unittest.TestCase):
+    """The `fields.json` guards, which `validate()` above never reaches."""
+
+    def reject(self, key, mutate):
+        fields = config.default_fields()
+        mutate(fields)
+        with self.assertRaises(config.ConfigError,
+                               msg=f"{key} should have been rejected") as ctx:
+            config.validate_fields(fields, "fields.json")
+        self.assertEqual(ctx.exception.key, key)
+        return ctx.exception
+
+    def test_a_field_must_be_an_object(self):
+        self.reject("receipt_fields[0]",
+                    lambda f: f.update(receipt_fields=["customer_name"]))
+
+    def test_warranty_must_be_an_object(self):
+        self.reject("warranty", lambda f: f.update(warranty=[]))
+
+    def test_warranty_enabled_must_be_a_boolean(self):
+        self.reject("warranty.enabled",
+                    lambda f: f["warranty"].update(enabled="yes"))
+
+    def test_an_enabled_warranty_needs_options(self):
+        """Enabled with nothing to choose would give an empty dropdown."""
+        self.reject("warranty.options",
+                    lambda f: f["warranty"].update(enabled=True, options=[]))
+
+    def test_a_warranty_of_only_blanks_counts_as_empty(self):
+        self.reject("warranty.options",
+                    lambda f: f["warranty"].update(enabled=True, options=["", "  "]))
+
+    def test_a_warranty_option_must_be_text(self):
+        self.reject("warranty.options[1]",
+                    lambda f: f["warranty"].update(options=["1 Year", 12]))
+
+    def test_a_warranty_option_takes_at_most_one_placeholder(self):
+        """Two '#' marks would make the period ambiguous to substitute into."""
+        error = self.reject("warranty.options[0]",
+                            lambda f: f["warranty"].update(options=["# of # Months"]))
+        self.assertIn("at most one", str(error))
+
+    def test_a_disabled_warranty_needs_no_options(self):
+        fields = config.default_fields()
+        fields["warranty"] = {"enabled": False, "options": []}
+        config.validate_fields(fields, "fields.json")
 
 if __name__ == "__main__":
     unittest.main()
