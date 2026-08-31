@@ -21,7 +21,7 @@ it is labelled as what it is rather than presented as the price of the goods.
 """
 from decimal import Decimal
 
-from receipt_render import quantize, to_decimal
+from money import quantize, to_decimal
 
 #: Where a plan hangs, on the receipt data or on one line item.
 PLAN_KEY = "installment"

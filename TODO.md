@@ -254,8 +254,10 @@ turns `amount` off and this on.
 - [x] The line total accounts for that line's own discount and tax. **Shipping is the
       exception** — it is charged per shipment group, not per line (§6.9), and apportioning it
       across lines would invent a split the customer cannot check.
-- [ ] *Still open:* the installment part (§6.5), which cannot be added until the cash-versus-
-      financed question there is answered.
+- [x] *The installment part resolved itself.* §6.5 settled that the cash price stays the receipt
+      total, so a line's total is its cash figure and the plan is disclosed separately — as a note
+      on the line, next to the warranty. Folding a financed figure into the line total would have
+      contradicted that decision and pushed tax onto the finance charge.
 - [x] The gross stays visible. A customer shown only the net cannot check that the discount was
       applied — so both columns exist, each toggleable per §6.6.
 - [x] **Added as a new column rather than redefining the existing one.** This resolved a

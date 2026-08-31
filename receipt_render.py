@@ -39,6 +39,8 @@ from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
 import config
 import line_units
+import shipments
+from money import AMOUNT_DECIMALS, to_decimal, quantize
 import template_engine
 from template_engine import TemplateError
 from config import (
@@ -383,24 +385,9 @@ def build_page_footer_template():
 
 
 # ------------------- amounts (Decimal end to end) -------------------
-#: Fallback precision when no currency config is supplied.
-AMOUNT_DECIMALS = 2
-
-
-def to_decimal(value):
-    """Coerce user/JSON input to Decimal without inheriting binary float noise."""
-    if isinstance(value, Decimal):
-        return value
-    try:
-        return Decimal(str(value).strip() or "0")
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("0")
-
-
-def quantize(value, decimals=None):
-    """Round to the display precision, half-up (what a till receipt does)."""
-    places = AMOUNT_DECIMALS if decimals is None else decimals
-    return to_decimal(value).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+# Defined in money.py so installments.py and shipments.py can round the same way
+# without importing the renderer -- doing that put a circular import one module
+# away. Re-exported here because this is where the rest of the app reaches them.
 
 
 def line_gross(item):
@@ -650,11 +637,18 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     )
 
     rows = []
+    # Group a shipment's lines together. Stable, so the same data always
+    # renders identically -- determinism is a tested invariant. Ungrouped
+    # receipts come back in their original order untouched.
+    items = shipments.order_items(items)
+    shipment_markers = shipments.markers_for(items)
+
     for item in items:
         cells = "".join(
             _block(templates, "item_row_cell.html",
                    _cell_context(item, field, empty_cell, currency, group_lines,
-                                 strings, none_warranty, show_installments))
+                                 strings, none_warranty, show_installments,
+                                 shipment_markers))
             for field in columns
         )
         rows.append(f"<tr>{cells}</tr>")
@@ -664,7 +658,10 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     subtotal = sum((quantize(line_gross(i), decimals) for i in items), Decimal("0"))
     total_discount = sum((quantize(i.get("discount", 0), decimals) for i in items), Decimal("0"))
     total_tax = sum((quantize(i.get("tax", 0), decimals) for i in items), Decimal("0"))
-    ship = quantize(data.get("shipping", 0), decimals)
+    # Shipping is charged per shipment when the lines are grouped, and as the
+    # single flat fee it has always been when they are not.
+    shipment_rows, ship = shipments.rows(
+        data, items, decimals, flat_shipping=data.get("shipping", 0))
 
     # Document-level tax rows, on top of the per-line tax amounts above.
     doc_tax_rows, doc_tax_added = compute_tax_rows(
@@ -675,7 +672,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     # Break the subtotal out only when there is something besides the line items
     # to show; otherwise TOTAL alone says everything.
     totals_rows = ""
-    if total_tax or total_discount or ship or doc_tax_rows:
+    if total_tax or total_discount or ship or doc_tax_rows or shipment_rows:
         breakdown = [(totals_labels.get("subtotal", "Subtotal"),
                       format_amount(subtotal, currency))]
         if total_tax:
@@ -687,7 +684,22 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
             # for an amount that is itself negative (a refund line).
             breakdown.append((totals_labels.get("discounts", "Discounts"),
                               "- " + format_amount(total_discount, currency)))
-        if ship:
+        if shipment_rows:
+            # Each shipment's own fee, then the combined total. A customer
+            # seeing two charges needs to see what each one was for, or the
+            # second reads as a mistake.
+            for tag, position, count, fee in shipment_rows:
+                label = shipments.marker(
+                    position, count,
+                    strings.get("totals", {}).get("shipment_marker",
+                                                  "Shipment {n} of {total}"))
+                base = totals_labels.get("shipping", "Shipping Fees")
+                breakdown.append((f"{base} — {label}" if label else base,
+                                  format_amount(fee, currency)))
+            if len(shipment_rows) > 1:
+                breakdown.append((totals_labels.get("shipping", "Shipping Fees"),
+                                  format_amount(ship, currency)))
+        elif ship:
             breakdown.append((totals_labels.get("shipping", "Shipping Fees"),
                               format_amount(ship, currency)))
         # In inclusive mode these are reported, not added, so the label has to
@@ -940,7 +952,7 @@ def visible_columns(fields, items, decimals):
 
 def _cell_context(item, field, empty_cell="-", currency=None, group=True,
                   strings=None, none_warranty=NO_WARRANTY_LABEL,
-                  show_installments=False):
+                  show_installments=False, shipment_markers=None):
     """Precompute one cell's finished strings -- templates make no decisions."""
     currency = currency or {}
     strings = strings or {}
@@ -984,6 +996,9 @@ def _cell_context(item, field, empty_cell="-", currency=None, group=True,
             note = warranty
         # A line's own instalment plan belongs with the line, not in a column:
         # it is a sentence, and it only applies to this one item.
+        marker = (shipment_markers or {}).get(shipments.group_of(item), "")
+        if marker:
+            note = f"{note} · {marker}" if note else marker
         if show_installments:
             import installments
             plan = installments.describe(

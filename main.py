@@ -242,6 +242,9 @@ class ReceiptApp:
         # A plan covering the whole order. Kept as a plain dict rather than a Tk
         # variable because it is three numbers, not one, and nothing binds to it.
         self.order_plan = {}
+        # Per-shipment shipping fees: [{"id": "1", "fee": "500"}]. Empty means
+        # the single flat shipping fee beside it, which is the normal case.
+        self.shipment_fees = []
         ttk.Entry(main_frame, textvariable=self.shipping, width=15).grid(row=2, column=4, padx=5, pady=2, sticky=tk.W)
 
         # --- items frame ---
@@ -256,6 +259,8 @@ class ReceiptApp:
         toolbar.pack(fill=tk.X, pady=2)
         ttk.Button(toolbar, text="+ Add Item", command=self.add_item).pack(side=tk.LEFT, padx=5)
         ttk.Button(toolbar, text="Edit Selected", command=self.edit_item).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="Shipping per shipment…",
+                   command=self.edit_shipments).pack(side=tk.LEFT, padx=5)
         # A plan for the whole order. Only built when plans are switched on, so
         # a shop that never finances anything never sees the button.
         self.order_plan_button = None
@@ -957,6 +962,91 @@ class ReceiptApp:
         parent.wait_window(win)
         return result["units"]
 
+    def shipment_tags_used(self):
+        """Shipment tags present on the item rows, in first-mention order."""
+        import shipments
+        items = [self.row_to_item(self.items_tree.item(row)["values"])
+                 for row in self.items_tree.get_children()]
+        return shipments.groups_used(items)
+
+    def edit_shipments(self):
+        """Set a shipping fee for each shipment the lines are grouped into.
+
+        Only fees for shipments that actually have lines: a fee for a group
+        nobody is in would be charged to nobody, and would make the shipping
+        total disagree with the lines above it.
+        """
+        import shipments
+
+        tags = self.shipment_tags_used()
+        if not tags:
+            messagebox.showinfo(
+                "No shipments yet",
+                "Give at least one item a shipment before setting per-shipment "
+                "shipping. Items left without one share the single Shipping "
+                "fee at the top.", parent=self.root)
+            return
+
+        existing = {str(e.get("id", "")): str(e.get("fee", ""))
+                    for e in self.shipment_fees if isinstance(e, dict)}
+
+        win = tk.Toplevel(self.root)
+        win.title("Shipping per shipment")
+        win.transient(self.root)
+        win.resizable(False, False)
+        win.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            win, padding=(12, 10, 12, 6), wraplength=430, justify=tk.LEFT,
+            text="One fee for each shipment. The receipt groups each "
+                 "shipment's lines together and shows every fee and their "
+                 "combined total, so a customer can see why the shipping came "
+                 "to what it did.",
+        ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+
+        variables = {}
+        for index, tag in enumerate(tags, start=1):
+            label = shipments.marker(index, len(tags)) or f"Shipment {tag}"
+            ttk.Label(win, text=f"{label}  ({tag})").grid(
+                row=index, column=0, padx=12, pady=5, sticky=tk.W)
+            var = tk.StringVar(value=existing.get(tag, ""))
+            ttk.Entry(win, textvariable=var, width=INPUT_WIDTH).grid(
+                row=index, column=1, padx=12, pady=5, sticky=tk.EW)
+            variables[tag] = var
+
+        def save():
+            fees = []
+            for tag, var in variables.items():
+                text = var.get().strip()
+                if not text:
+                    continue
+                try:
+                    value = float(text)
+                except ValueError:
+                    messagebox.showerror(
+                        "Shipping", f"The fee for shipment {tag} must be a number.",
+                        parent=win)
+                    return
+                if value < 0:
+                    messagebox.showerror(
+                        "Shipping",
+                        f"The fee for shipment {tag} cannot be negative. A "
+                        f"refund belongs on a line, not on the shipping.",
+                        parent=win)
+                    return
+                fees.append({"id": tag, "fee": text})
+            self.shipment_fees = fees
+            win.destroy()
+
+        buttons = ttk.Frame(win, padding=(12, 10))
+        buttons.grid(row=len(tags) + 1, column=0, columnspan=2, sticky=tk.E)
+        ttk.Button(buttons, text="Save", command=save).pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=4)
+
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        _safe_grab(win)
+        self.root.wait_window(win)
+
     def lines_with_plans(self):
         """How many item rows carry their own instalment plan."""
         count = 0
@@ -1404,6 +1494,19 @@ class ReceiptApp:
         }
         if self.order_plan:
             data["installment"] = self.order_plan
+        if self.shipment_fees:
+            data["shipments"] = self.shipment_fees
+
+        try:
+            import shipments
+            shipments.validate(data, items)
+        except Exception as exc:                 # noqa: BLE001 - shown, not swallowed
+            show_error(self.root, "Shipping does not add up", str(exc),
+                       traceback.format_exc())
+            if reserved:
+                invoice_counter.note_unused(
+                    reserved, inv_no, "shipment fees did not match the lines")
+            return
 
         # One plan, or one per line, never both. Enforced here as well as in the
         # dialogs, because a receipt reloaded from history can carry a
@@ -1628,6 +1731,7 @@ class ReceiptApp:
             self.date.set(data["date_str"])
 
         self.order_plan = data.get("installment") or {}
+        self.shipment_fees = data.get("shipments") or []
         self.refresh_order_plan_label()
         for child in self.items_tree.get_children():
             self.items_tree.delete(child)

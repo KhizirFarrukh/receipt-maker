@@ -327,7 +327,7 @@ RESERVED_FIELD_KEYS = frozenset({
 #: get it too. The lists are replaced wholesale on load rather than merged (their
 #: order is the column order), so without a migration a new built-in would only
 #: ever reach brand-new installs.
-FIELDS_SCHEMA_VERSION = 4
+FIELDS_SCHEMA_VERSION = 5
 
 DEFAULT_FIELDS = {
     SCHEMA_VERSION_KEY: FIELDS_SCHEMA_VERSION,
@@ -369,6 +369,11 @@ DEFAULT_FIELDS = {
         # shop that does not label its own stock should never see it.
         {"key": "unit_id", "label": "Unit ID", "type": "text",
          "enabled": False, "per_unit": True},
+        # Which shipment this line leaves in. Lines sharing a tag are grouped
+        # together on the receipt and share one shipping fee. Off by default:
+        # an order that ships in one go needs nothing here.
+        {"key": "shipment", "label": "Shipment", "type": "text",
+         "enabled": False, "sticky": True},
     ],
     # An option containing "#" prompts for a positive whole number when chosen,
     # so one entry covers "12 Months", "24 Months" and so on.
@@ -410,6 +415,7 @@ DEFAULT_STRINGS = {
         "taxes": "Taxes",
         "discounts": "Discounts",
         "shipping": "Shipping Fees",
+        "shipment_marker": "Shipment {n} of {total}",
         "installment_down": "Down payment",
         "installment_monthly": "Monthly payment",
         "installment_total": "Total if paid in instalments",
@@ -1119,6 +1125,15 @@ def migrate_fields(fields, version):
             index = next((i + 1 for i, f in enumerate(items)
                           if isinstance(f, dict) and f.get("key") == "serial"), len(items))
             items.insert(index, dict(defaults["unit_id"]))
+            changed = True
+
+    if version < 5:
+        # v5 introduced per-shipment shipping: a line says which shipment it
+        # leaves in, and each shipment carries its own fee.
+        if "shipment" not in present:
+            defaults = {f["key"]: f for f in DEFAULT_FIELDS["line_item_fields"]}
+            items = fields.setdefault("line_item_fields", [])
+            items.append(dict(defaults["shipment"]))
             changed = True
 
     if fields.get(SCHEMA_VERSION_KEY) != FIELDS_SCHEMA_VERSION:
