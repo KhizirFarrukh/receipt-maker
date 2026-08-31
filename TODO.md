@@ -157,13 +157,37 @@ pricing mistake — so the UI must name which one it is using:
 
 ## 6. Line-item detail, installments and receipt layout  *(agreed 2026-08-31)*
 
-Eleven requests: ten agreed together, and §6.9 added straight after. They are grouped by what they
+Twelve requests: ten agreed together, then §6.9 and §6.10 straight after. They are grouped by what they
 touch rather than in the order they were given, because several are the same change seen from
 different angles — §6.1 and §6.2 are one mechanism used twice, and §6.7's two halves are the same
 widening problem in the form and on the page.
 
 **Do §6.4 first.** It is the smallest of these and unblocks the most: it is what makes every other
 per-line number trustworthy.
+
+### 6.0 Cross-cutting — read before starting any of these
+
+Reviewed the twelve together on 2026-08-31 rather than taking each at face value. Four things
+apply to nearly all of them and are easy to miss when picking one item off the list.
+
+**Every one of these needs a schema migration.** `appsettings.json` is at v4 and `fields.json` at
+v2, both with a `migrate()` that runs on load and persists once. New fields do not appear in an
+existing install by magic — they arrive by migration, added disabled, exactly as `barcode` was in
+§1. Forgetting this means the feature works on a fresh install and is invisible on the user's.
+
+**Several of these regenerate the golden file, not just §6.4.** §6.7 (row height), §6.9
+(reordering) and §6.10 (a new totals row) all change rendered HTML. That is expected — but the
+rule stands: inspect the diff, justify it in the commit, never regenerate to make a test pass.
+
+**Reordering must be a *stable* sort (§6.9).** Determinism is a tested invariant
+(`tests/test_stage0.py:73`) and the golden gate compares bytes: the same receipt data must render
+identically every time. Grouping lines by shipment with an unstable sort would let two renders of
+one receipt differ, which breaks the gate in a way that looks like flakiness rather than a bug.
+Sort by group, preserve entry order within a group.
+
+**Off by default is not enough for §6.4.** Everything new here defaults off so existing receipts
+keep their shape — but §6.4 changes what an *existing* column means, which no toggle covers. See
+the resolution recorded there.
 
 ### 6.1 Several serial numbers per line — one per unit
 
@@ -187,6 +211,12 @@ is per *product*. Nothing today is the store's own *and* per *unit*.
 
 - [ ] A new **optional** per-unit field, one value per quantity — mechanically the same list as
       §6.1, so build one mechanism and use it twice.
+- [ ] **Store the units as a list of records, not two parallel lists.** A line of qty 3 holds three
+      *units*, each with its own serial and its own store ID — not a list of serials beside a list
+      of IDs. Parallel lists have to be kept aligned by hand, and they drift the first time someone
+      deletes the middle serial: every store ID below it then belongs to the wrong unit, silently.
+      This is worth getting right before either field ships, because changing it later is a data
+      migration rather than a refactor.
 - [ ] Off by default. A shop that does not label its own stock must never see it.
 - [ ] It needs a key that cannot be confused with `serial` or `sku` in the field editor. The label
       is user-editable anyway, so the key is what matters.
@@ -201,6 +231,9 @@ is per *product*. Nothing today is the store's own *and* per *unit*.
       lists, so do the two together.
 - [ ] The receipt template needs somewhere for a paragraph to sit, and it must wrap rather than
       overflow.
+- [ ] A long note spans pages, so it needs the same page-break care as §6.7's rows — and unlike a
+      row, a paragraph *should* be allowed to break. Decide where it prints: after the items, or on
+      its own at the end.
 
 ### 6.4 A real per-line total — **do this one first**
 
@@ -213,8 +246,14 @@ only in the totals block far below.
       plan (§6.5) where it has one. **Shipping is the exception** — it is charged per shipment
       group, not per line (§6.9), and apportioning it across lines would invent a split the
       customer cannot check.
-- [ ] Keep the gross visible too. A customer shown only the net cannot check that the discount was
-      applied — so likely both columns, each toggleable per §6.6.
+- [ ] Keep the gross visible too. A customer shown only the net cannot check that the discount
+      was applied — so both columns, each toggleable per §6.6.
+- [ ] **Add a new column; do not redefine the existing one.** This resolves a contradiction found
+      on review: §6.6 promises nothing changes shape for existing receipts, but redefining what
+      `amount` means would change the figure printed on *every* receipt already being issued —
+      something no toggle covers, because the column is already on. So `amount` keeps its present
+      meaning (`qty × price`, the gross) and the line total arrives as a **new field, off by
+      default**. A shop that wants only the net can then turn `amount` off and the new column on.
 - [ ] **Use the existing Decimal path**: round each line, then sum the rounded values. Do not
       re-derive it. That rule is an invariant (ARCHITECTURE.md), and breaking it makes a receipt
       disagree with itself by a penny.
@@ -238,6 +277,10 @@ different — larger — total than the cash price.
 **Settle before building:** does the financed total become *the* receipt total, or does the receipt
 show the cash price with the plan beside it? That decides what the tax rows apply to, so choosing
 wrong misstates tax. Ask rather than assume.
+
+**This question also decides §6.10.** A payment-method charge is a percentage of a total, so it
+cannot be implemented until it is known *which* total — cash or financed. Answer this one first;
+the two are the same decision asked twice.
 
 ### 6.6 Everything optional is toggleable
 
@@ -273,7 +316,8 @@ new layout logic. Verify against a real multi-page PDF before designing anything
 
 - [ ] Scanning a known barcode **adds a line** for that product, qty 1, filled from the catalogue.
 - [ ] Scanning the **same barcode again increments that line's quantity** instead of adding a
-      second line.
+      second line. Note that this makes a scan a quantity change, so it must grow the line's unit
+      list (§6.1) — scan a thing three times and three serials are now owed, not one.
 - [ ] The user then edits the line to supply what a scan cannot know — the serials (§6.1) above
       all.
 - [ ] An **unknown** barcode needs a defined answer: offer to create the product, or add a bare
@@ -299,21 +343,85 @@ warehouse and line 3 leaves another, each with its own carrier cost.
 3 — the groups interleave, so this cannot be modelled as contiguous sections of the table. Each
 line stores which shipment it belongs to.
 
-**Settle before building:**
+**Settled 2026-08-31:**
 
-- **Does the table reorder to put a shipment together, or keep entry order and mark each line?**
-  Reordering reads better but renumbers the lines, which matters if anyone quotes a line number.
-  Keeping entry order needs a column or marker that survives §6.7's taller rows.
-- **Does the group's name print?** The reason for grouping is which warehouse dispatched it, and
-  that may be internal. An optional label, blank by default, is the safe shape — but ask.
-- **Does tax apply to shipping?** If it does, several shipping rows each need the same treatment,
-  and the tax rows are document-level today. Check before assuming they can stay that way.
+- **The table reorders** so a shipment's lines sit together. Note the consequence: the printed
+  order will not match the order lines were entered in, so nothing may depend on entry position —
+  check whether anything quotes a line number before relying on one.
+- **The group's name does not print.** Grouping is internal for now. Keep the label in the data
+  model anyway, unset — printing it later is then a template change rather than a migration.
+- **Shipping is not taxed.** The document-level tax rows can stay as they are. But the *payment
+  method* carries its own charge — see §6.10, which came out of this question.
+
+**Open, found on review: as specified, the grouping is invisible.** The three settled answers
+combine into something that does not quite work. If the lines reorder, the group is not named, and
+the fees sit in the totals block, then a customer sees a re-sorted list of items and two shipping
+charges with nothing connecting them — the reordering communicates nothing, and the second fee
+looks like a mistake. Three ways out, needing a decision:
+
+- A neutral marker — "Shipment 1 of 2" — which groups the lines without naming a warehouse. This
+  looks like the intent of "no warehouse name" while still making the split legible.
+- Print each group's fee directly beneath its own lines rather than in the totals block, with only
+  the combined figure below.
+- Accept it: reorder purely for internal tidiness and let the customer see one combined shipping
+  figure, with the split visible only in the app.
+
+The third is the least work and the least useful; the first is recommended. Worth asking, because
+it is the difference between a receipt that explains itself and one that raises a question at the
+counter.
 
 **Shipping stays out of the per-line total (§6.4).** A group fee covers several lines at once, and
 splitting it across them would mean inventing an apportionment — by value, by weight, by count? —
 that the customer cannot check. It belongs in the totals block as several rows, not folded into a
 line. Worth stating because §6.4 otherwise pulls every adjustment down to the line.
 
+**Also check against §2's stock rules.** Stock commits *after* the receipt exists and a reissue
+adjusts by the difference. Once a sale removes *specific* serials (§6.1) rather than decrementing a
+count, "adjust by the difference" needs to mean specific serials returning to stock, not just a
+number going back up. That is a real complication in existing, tested behaviour — plan for it
+rather than discovering it.
+
 **Later, once the catalogue is richer (§2):** if a product records where it is stocked, the group
 could be assigned on its own rather than by hand. Do not build for that yet — it only pays off
 once products carry a location, which they do not.
+
+### 6.10 Charges that depend on how the customer pays
+
+Settled alongside §6.9: shipping itself is not taxed, but **the payment method carries its own
+charge**, and the amount depends on which one is used.
+
+| Method | Charge |
+|---|---|
+| Bank transfer | none |
+| Cash on delivery | 4%, a government-imposed tax |
+| Card (Visa / Mastercard / …) | the processing middleware's handling fee |
+
+- [ ] A payment method is chosen on the receipt, and its charge is applied and shown.
+- [ ] The methods and their rates are **editable in-app**, not hard-coded. The 4% is set by a
+      government and card processors change their fees; neither should need a new build.
+- [ ] Toggleable per §6.6 — a shop that takes only cash must not be asked.
+- [ ] Default to no methods configured, which behaves exactly as today.
+
+**A tax and a processing fee are not the same thing, and must not share a row type.** They have
+identical arithmetic — a percentage of the total — so it is tempting to model them as one. Resist
+it. The COD 4% is tax the government levies and that a shop has to account for and remit; the card
+fee is a private company's service charge and is not tax at all. Lumping them together overstates
+the tax collected on every card sale, which is a filing problem, not a cosmetic one. Model them as
+distinct kinds even though the calculation is shared.
+
+**The existing tax-row model is most of the shape already.** `TAX_ROW_TYPES` is
+`("percent", "fixed")` with a label and a value, validated and rendered — reuse it rather than
+inventing a parallel one. One gap: card processors usually charge **percentage *plus* a fixed
+amount** (the familiar "2.9% + 0.30"), which today needs two rows to express. Decide whether one
+method may carry both components.
+
+**Naming, worth getting right before it is built:** these were described as *shipping* methods, but
+bank transfer and card are how the customer **pays**, not how goods travel. Cash on delivery is
+genuinely both. The distinction matters because it decides where the field lives — on the shipment
+group (§6.9) or on the order.
+
+**Settle before building:** is the payment method **per order**, or can different shipments be paid
+differently? The recommendation is per order: you pay for an order once, and bank transfer and card
+are inherently single transactions. But COD is collected per delivery, so a two-warehouse order
+could in principle be two collections. Ask before assuming, because it decides whether this hangs
+off §6.9's shipment group or off the receipt.
