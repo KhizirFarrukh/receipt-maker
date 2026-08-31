@@ -265,6 +265,12 @@ DEFAULT_APP_SETTINGS = {
         "block_external_requests": True,
         "timeout_ms": 30000,
         "fail_on_missing_image": False,
+        # Whether a product line may be split across a page break. True keeps a
+        # line whole, which is what a line carrying several serial numbers needs
+        # -- otherwise its identifiers can land on a different page from the
+        # thing they identify. A line too tall for any page still breaks,
+        # because there is nowhere better for it to go.
+        "keep_rows_whole": True,
     },
     # Embedding a font makes a receipt render identically everywhere; with no
     # family set, Chromium substitutes a system font and the same receipt can
@@ -742,6 +748,8 @@ def validate(settings, filename=None):
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
         raise ConfigError(
             "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
+    if not isinstance(render.get("keep_rows_whole", True), bool):
+        raise ConfigError("must be true or false", filename, "render.keep_rows_whole")
 
     inventory = settings.get("inventory")
     if not isinstance(inventory, dict):

@@ -112,6 +112,12 @@ SETTINGS_SECTIONS = [
         ("render.fail_on_missing_image", "Treat a missing image as an error", "bool",
          {"help": "On: refuse to issue a receipt whose logo is missing."}),
         ("render.timeout_ms", "Render timeout (ms)", "int", {}),
+        ("render.keep_rows_whole", "Keep a product line on one page", "bool",
+         {"help": "A line is moved whole to the next page rather than split "
+                  "across the break. Matters most when a line carries several "
+                  "serial numbers, which would otherwise be printed on a "
+                  "different page from the item they identify. A line too tall "
+                  "for any page still breaks."}),
         ("fonts.family", "Embedded font family", "text",
          {"help": "Leave empty to use the system font."}),
         ("fonts.fallback", "Font fallback", "text", {}),

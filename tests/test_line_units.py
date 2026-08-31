@@ -421,6 +421,82 @@ class OnTheReceipt(unittest.TestCase):
         self.assertIn("Unit ID", with_values)
 
 
+class KeepingRowsWhole(unittest.TestCase):
+    """TODO 6.7 -- a product line must not be split across a page break.
+
+    The CSS was already there; what was missing was the choice. A line carrying
+    several serial numbers is exactly the case that needs it: split it, and the
+    identifiers land on a different page from the thing they identify.
+    """
+
+    def setUp(self):
+        self._app_dir = config.APP_DIR
+        self.dir = tempfile.mkdtemp(prefix="rm-breaks-")
+        shutil.copy(os.path.join(gate_env.GATE_ENV, "appsettings.json"),
+                    os.path.join(self.dir, "appsettings.json"))
+        config.set_app_dir(self.dir)
+        receipt_render.clear_template_cache()
+
+    def tearDown(self):
+        config.set_app_dir(self._app_dir)
+        receipt_render.clear_template_cache()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def render(self):
+        return receipt_render.build_html(
+            "INV-W1", "1 Jan 2026", "Ada", "", "",
+            [{"sku": "A", "desc": "Thing", "serial": "", "qty": 1, "price": "1",
+              "discount": "0", "tax": "0", "warranty": ""}], "Online", 0)
+
+    def set_option(self, value):
+        config.update_app_settings({"render": {"keep_rows_whole": value}})
+        receipt_render.clear_template_cache()
+
+    #: The rule the toggle governs. Asserting on "break-inside: avoid" alone
+    #: would be wrong: the customer box, the totals and the policy sections use
+    #: it too, and none of them are product lines.
+    ROW_RULE = "table.items tr {"
+
+    def test_lines_are_kept_whole_by_default(self):
+        self.assertIn(self.ROW_RULE, self.render())
+
+    def test_turning_it_off_drops_the_rule(self):
+        self.set_option(False)
+        self.assertNotIn(self.ROW_RULE, self.render())
+
+    def test_turning_it_back_on_restores_it(self):
+        self.set_option(False)
+        self.set_option(True)
+        self.assertIn(self.ROW_RULE, self.render())
+
+    def test_it_leaves_the_other_break_rules_alone(self):
+        """The totals block and the policy page still must not be split."""
+        self.set_option(False)
+        html = self.render()
+        self.assertIn(".totals-table {", html)
+        self.assertIn("break-inside: avoid", html)
+
+    def test_the_rest_of_the_stylesheet_is_unaffected(self):
+        """The toggle must remove one rule, not a chunk of the stylesheet."""
+        self.set_option(False)
+        html = self.render()
+        self.assertIn("table.items td.num", html)
+        self.assertIn("item-warranty-text", html)
+
+    def test_it_must_be_a_boolean(self):
+        settings = config.default_app_settings()
+        settings["render"]["keep_rows_whole"] = "yes"
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.validate(settings, "appsettings.json")
+        self.assertEqual(ctx.exception.key, "render.keep_rows_whole")
+
+    def test_render_receipt_stays_pure(self):
+        """It takes the choice as an argument; it must not read config itself."""
+        import inspect
+        self.assertIn("keep_rows_whole",
+                      inspect.signature(receipt_render.render_receipt).parameters)
+
+
 class HistoryRoundTrip(unittest.TestCase):
     """A receipt reloaded to be corrected must still know its serials."""
 

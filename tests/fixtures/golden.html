@@ -71,10 +71,17 @@
         font-size: 9pt;
         vertical-align: top;
     }
+
+    /* Keep a product line whole. A line carrying several serial numbers must not
+       be split across pages, or its identifiers end up on a different page from
+       the thing they identify. A line too tall for any page still breaks --
+       there is nowhere better, and the alternative is a blank page followed by
+       the same overflow. Turn off under Settings if tighter pages matter more. */
     table.items tr {
         break-inside: avoid;
         page-break-inside: avoid;
     }
+
     table.items td.num {
         text-align: right;
     }

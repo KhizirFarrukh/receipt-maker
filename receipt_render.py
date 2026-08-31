@@ -526,7 +526,7 @@ NO_WARRANTY_LABEL = "No Warranty"
 BLOCK_CONTEXTS = {
     "base.html": {"resource_base", "styles", "font_faces", "receipt_info",
                   "items_table", "totals", "terms"},
-    "styles.css": set(),
+    "styles.css": {"keep_rows_whole"},
     "receipt_info.html": {"type_badge", "invoice_no", "date", "customer_name",
                           "customer_phone", "customer_email",
                           "custom_receipt_fields"},
@@ -610,11 +610,13 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
         terms=settings.get("terms_page", {}).get("enabled", True),
         tax_config=settings.get("tax"),
         fields=config.load_fields(),
+        keep_rows_whole=settings.get("render", {}).get("keep_rows_whole", True),
     )
 
 
 def render_receipt(data, templates, resource_base="", font_faces="", strings=None,
-                   currency=None, terms=True, tax_config=None, fields=None):
+                   currency=None, terms=True, tax_config=None, fields=None,
+                   keep_rows_whole=True):
     """Pure render: (data, templates, strings, currency) -> html.
 
     No clock, no IO, no globals. Everything non-deterministic (the resource base
@@ -731,7 +733,9 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
 
     return _block(templates, "base.html", {
         "resource_base": resource_base,
-        "styles": _block(templates, "styles.css"),
+        "styles": _block(templates, "styles.css", {
+            "keep_rows_whole": keep_rows_whole,
+        }),
         "font_faces": font_faces,
         "receipt_info": receipt_info,
         "items_table": items_table,
