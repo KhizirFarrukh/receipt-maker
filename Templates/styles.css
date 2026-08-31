@@ -77,6 +77,13 @@
         font-style: italic;
         font-size: 8pt;
     }
+    /* A per-unit column holds one value for each thing sold, so the cell has to
+       keep the line breaks between them -- without this they run together into
+       one unreadable string. `pre-line` also collapses the trailing whitespace
+       a blank unit would otherwise leave behind. */
+    table.items td.item-units {
+        white-space: pre-line;
+    }
     .totals-table {
         width: 50%;
         margin-left: 50%;

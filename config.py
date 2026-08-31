@@ -291,12 +291,20 @@ FIELD_TYPES = ("text", "multiline", "integer", "number", "amount", "computed",
 #: computed from them. validate() enforces this.
 BUILTIN_LINE_ITEM_KEYS = ("qty", "price", "amount")
 
+#: Types that can sensibly hold one value per physical unit. A serial number or
+#: an asset tag identifies a thing; a price or a computed total describes the
+#: whole line, so making one per-unit would have no meaning.
+PER_UNIT_FIELD_TYPES = ("text", "select", "date")
+
 #: Names the renderer and the template engine already use for their own values.
 #: A custom field taking one of these would silently shadow it mid-render.
 RESERVED_FIELD_KEYS = frozenset({
     "value", "css_class", "note", "label", "styles", "font_faces", "terms",
     "resource_base", "receipt_info", "items_table", "totals", "totals_rows",
     "header_cells", "rows", "type_badge", "warranty",
+    # Holds the per-unit records for a line (line_units.py). A custom field
+    # taking this key would overwrite every serial number on the receipt.
+    "units",
 })
 
 #: Shipped field definitions. These reproduce today's form and receipt exactly;
@@ -306,7 +314,7 @@ RESERVED_FIELD_KEYS = frozenset({
 #: get it too. The lists are replaced wholesale on load rather than merged (their
 #: order is the column order), so without a migration a new built-in would only
 #: ever reach brand-new installs.
-FIELDS_SCHEMA_VERSION = 3
+FIELDS_SCHEMA_VERSION = 4
 
 DEFAULT_FIELDS = {
     SCHEMA_VERSION_KEY: FIELDS_SCHEMA_VERSION,
@@ -324,7 +332,11 @@ DEFAULT_FIELDS = {
         {"key": "barcode", "label": "Barcode", "type": "text", "enabled": False},
         {"key": "desc", "label": "Item Description", "type": "text",
          "enabled": True, "required": True},
-        {"key": "serial", "label": "Serial Number", "type": "text", "enabled": True},
+        # A *unit* identifier: unlike sku and barcode above, no two things
+        # sold share one. Set "per_unit": true to collect one for each item in
+        # a line of quantity 3 rather than a single box for the whole line.
+        {"key": "serial", "label": "Serial Number", "type": "text",
+         "enabled": True, "per_unit": False},
         {"key": "qty", "label": "Qty", "type": "integer", "enabled": True, "default": "1"},
         {"key": "price", "label": "Unit Price", "type": "amount", "enabled": True},
         {"key": "discount", "label": "Discount", "type": "amount",
@@ -338,6 +350,12 @@ DEFAULT_FIELDS = {
         # disabled; a shop wanting only the net turns `amount` off and this on.
         {"key": "line_total", "label": "Line Total", "type": "computed",
          "enabled": False},
+        # The shop's own per-unit label, for stock it marks itself. Distinct
+        # from sku (which names the product, not the unit) and from serial
+        # (which the manufacturer assigns, not the shop). Off by default: a
+        # shop that does not label its own stock should never see it.
+        {"key": "unit_id", "label": "Unit ID", "type": "text",
+         "enabled": False, "per_unit": True},
     ],
     # An option containing "#" prompts for a positive whole number when chosen,
     # so one entry covers "12 Months", "24 Months" and so on.
@@ -1062,6 +1080,22 @@ def migrate_fields(fields, version):
             items.insert(index, dict(defaults["line_total"]))
             changed = True
 
+    if version < 4:
+        # v4 introduced per-unit values: one serial number for each item in a
+        # line, plus the shop's own optional unit label. `serial` gains the
+        # flag set to false, so it keeps behaving as the single box it was.
+        defaults = {f["key"]: f for f in DEFAULT_FIELDS["line_item_fields"]}
+        items = fields.setdefault("line_item_fields", [])
+        for field in items:
+            if isinstance(field, dict) and field.get("key") == "serial":
+                field.setdefault("per_unit", False)
+                changed = True
+        if "unit_id" not in present:
+            index = next((i + 1 for i, f in enumerate(items)
+                          if isinstance(f, dict) and f.get("key") == "serial"), len(items))
+            items.insert(index, dict(defaults["unit_id"]))
+            changed = True
+
     if fields.get(SCHEMA_VERSION_KEY) != FIELDS_SCHEMA_VERSION:
         fields[SCHEMA_VERSION_KEY] = FIELDS_SCHEMA_VERSION
         changed = True
@@ -1136,7 +1170,7 @@ def _validate_field(field, where, seen, filename):
         raise ConfigError(
             "must have a label -- it is what the receipt prints",
             filename, f"{where}.label")
-    for flag in ("enabled", "required", "optional_column", "sticky"):
+    for flag in ("enabled", "required", "optional_column", "sticky", "per_unit"):
         if not isinstance(field.get(flag, False), bool):
             raise ConfigError("must be true or false", filename, f"{where}.{flag}")
     if field_type == "select":
@@ -1145,6 +1179,21 @@ def _validate_field(field, where, seen, filename):
             raise ConfigError(
                 "a select field needs a non-empty list of options",
                 filename, f"{where}.options")
+    if field.get("per_unit"):
+        # A per-unit value is one identifier for one physical thing. The types
+        # that are computed or aggregated over a line have no per-unit meaning,
+        # and quantity least of all -- it is what says how many units there are.
+        if field_type not in PER_UNIT_FIELD_TYPES:
+            raise ConfigError(
+                f"a per-unit field holds one identifier for each item sold, so "
+                f"it must be one of {', '.join(PER_UNIT_FIELD_TYPES)} "
+                f"(got {field_type!r})",
+                filename, f"{where}.per_unit")
+        if key in BUILTIN_LINE_ITEM_KEYS:
+            raise ConfigError(
+                f"{key!r} is used to calculate the receipt totals, so it "
+                f"describes the whole line and cannot be per-unit",
+                filename, f"{where}.per_unit")
 
 
 def _validate_warranty(fields, filename):

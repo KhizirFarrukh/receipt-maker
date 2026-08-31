@@ -38,6 +38,7 @@ import re
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
 import config
+import line_units
 import template_engine
 from template_engine import TemplateError
 from config import (
@@ -868,7 +869,12 @@ def _receipt_field_value(data, field, currency, strings):
 
 
 def _css_class(field):
-    return TYPE_PRESENTATION.get(field.get("type", "text"), ("", "plain"))[0]
+    base = TYPE_PRESENTATION.get(field.get("type", "text"), ("", "plain"))[0]
+    if field.get(line_units.PER_UNIT_FLAG):
+        # The cell holds several lines; the class is what stops them running
+        # together into one paragraph (styles.css: white-space: pre-line).
+        return f"{base} item-units".strip()
+    return base
 
 
 def visible_columns(fields, items, decimals):
@@ -884,7 +890,15 @@ def visible_columns(fields, items, decimals):
             continue
         if field.get("optional_column"):
             key = field["key"]
-            if not any(quantize(item.get(key, 0), decimals) for item in items):
+            if field.get(line_units.PER_UNIT_FLAG):
+                # A per-unit column holds text in `units`, not a number on the
+                # item, so "is it used?" is whether any unit carries a value --
+                # quantize() would read every serial as 0 and hide the column.
+                used = any(line_units.to_text(line_units.values_for(item, key))
+                           for item in items)
+            else:
+                used = any(quantize(item.get(key, 0), decimals) for item in items)
+            if not used:
                 continue
         columns.append(field)
     return columns
@@ -903,6 +917,12 @@ def _cell_context(item, field, empty_cell="-", currency=None, group=True,
         raw = line_total(item, decimals)
     elif key in DERIVED_KEYS:
         raw = line_gross(item)
+    elif field.get(line_units.PER_UNIT_FLAG):
+        # One value for each thing sold, stacked in the cell. Blanks are left
+        # out rather than printed as gaps: a line where only two of three
+        # serials were captured should show the two, not two and an empty row.
+        raw = line_units.to_text(line_units.values_for(item, key))
+        style = "lines"
     else:
         raw = item.get(key, "")
 

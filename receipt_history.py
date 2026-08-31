@@ -29,6 +29,7 @@ import logging
 import os
 
 import config
+import line_units
 
 logger = logging.getLogger("receipt_maker")
 
@@ -55,8 +56,23 @@ def build_record(data, pdf_path="", signed=False, now=None):
     stamp = (now or datetime.datetime.now()).isoformat(timespec="seconds")
     items = []
     for item in data.get("items") or []:
-        items.append({key: (_as_text(value) if not isinstance(value, bool) else value)
-                      for key, value in item.items()})
+        record = {}
+        for key, value in item.items():
+            if key == line_units.UNITS_KEY:
+                # Per-unit records are the one structured value on a line. Text
+                # is right for everything else -- a quantity reloaded as the
+                # string it was typed as re-renders identically -- but stringing
+                # this one would store "[{'serial': ...}]" and lose the serials
+                # the moment the receipt was reloaded to be corrected.
+                record[key] = [
+                    {k: _as_text(v) for k, v in unit.items()}
+                    for unit in (value or []) if isinstance(unit, dict)
+                ]
+            elif isinstance(value, bool):
+                record[key] = value
+            else:
+                record[key] = _as_text(value)
+        items.append(record)
     return {
         "history_version": HISTORY_VERSION,
         "recorded_at": stamp,

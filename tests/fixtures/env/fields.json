@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "receipt_fields": [],
   "line_item_fields": [
     {
@@ -25,7 +25,15 @@
       "key": "serial",
       "label": "Serial Number",
       "type": "text",
-      "enabled": true
+      "enabled": true,
+      "per_unit": false
+    },
+    {
+      "key": "unit_id",
+      "label": "Unit ID",
+      "type": "text",
+      "enabled": false,
+      "per_unit": true
     },
     {
       "key": "qty",

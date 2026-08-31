@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import calendar
 from datetime import date, datetime
+import json
 import logging
 import logging.handlers
 import os
@@ -20,6 +21,7 @@ import traceback
 
 import config  # noqa: F401  (import sets frozen PLAYWRIGHT_BROWSERS_PATH)
 import invoice_counter
+import line_units
 import receipt_render
 import receipt_service
 import receipt_signing
@@ -263,10 +265,14 @@ class ReceiptApp:
         # Columns follow fields.json, plus warranty, so a custom field can be
         # typed in as well as printed. self.input_fields is the single ordering
         # everything else keys off -- tree, dialog and item collection.
-        columns = [f["key"] for f in self.input_fields]
-        if self.warranty_enabled:
-            columns.append("warranty")
-        self.items_tree = ttk.Treeview(tree_wrap, columns=columns, show="headings",
+        columns = self.tree_keys()
+        # The units column carries JSON, not something anyone should read: it is
+        # in `columns` so the row tuple has a slot for it, and out of
+        # `displaycolumns` so it never appears. The serials themselves are shown
+        # in their own field's column, summarised.
+        shown = [c for c in columns if c != line_units.UNITS_KEY]
+        self.items_tree = ttk.Treeview(tree_wrap, columns=columns,
+                                       displaycolumns=shown, show="headings",
                                        height=6, selectmode="browse")
         for field in self.input_fields:
             label = field.get("label", field["key"])
@@ -616,13 +622,68 @@ class ReceiptApp:
             vars_[field["key"]] = self._build_field_widget(
                 dialog, field, row, remembered.get(field["key"]))
 
+        # Per-unit fields (serial numbers, the shop's own unit IDs) are not a
+        # single box: a line of quantity 3 needs three of each. They are edited
+        # in a grid opened from here, so the main dialog keeps one row per field
+        # however many units the line covers.
+        unit_keys = line_units.per_unit_keys(self.fields)
+        unit_state = {"units": []}
+        units_button = None
+        units_summary = None
+        if unit_keys:
+            units_row = len(labels)
+            unit_labels = [f.get("label", f["key"]) for f in self.input_fields
+                           if f["key"] in unit_keys]
+            ttk.Label(dialog, text=" / ".join(unit_labels)).grid(
+                row=units_row, column=0, padx=10, pady=5, sticky=tk.W)
+            units_holder = ttk.Frame(dialog)
+            units_holder.grid(row=units_row, column=1, padx=10, pady=5, sticky=tk.EW)
+            units_button = ttk.Button(
+                units_holder, text="Enter per item…",
+                command=lambda: open_units())
+            units_button.pack(side=tk.LEFT)
+            units_summary = ttk.Label(units_holder, text="", foreground="#64748b")
+            units_summary.pack(side=tk.LEFT, padx=(8, 0))
+
+        def refresh_units_summary():
+            if units_summary is None:
+                return
+            qty = line_units.quantity_of({"qty": vars_["qty"].get()}) if "qty" in vars_ else 0
+            units = line_units.normalise({line_units.UNITS_KEY: unit_state["units"],
+                                          "qty": qty}, unit_keys, qty)
+            unit_state["units"] = units
+            filled = sum(1 for u in units
+                         if any(str(u.get(k, "")).strip() for k in unit_keys))
+            if not qty:
+                text = ""
+            elif filled == qty:
+                text = f"{qty} of {qty} entered"
+            else:
+                text = f"{filled} of {qty} entered"
+            units_summary.config(
+                text=text, foreground="#166534" if qty and filled == qty else "#b45309")
+
+        def open_units():
+            qty = line_units.quantity_of({"qty": vars_["qty"].get()}) if "qty" in vars_ else 0
+            if not qty:
+                messagebox.showinfo(
+                    "Quantity first",
+                    "Set the quantity before entering per-item details -- it is "
+                    "what says how many are needed.", parent=dialog)
+                return
+            entered = self.open_units_dialog(
+                dialog, unit_keys, unit_state["units"], qty)
+            if entered is not None:
+                unit_state["units"] = entered
+                refresh_units_summary()
+
         # Pick from the catalogue instead of typing the same product again.
         # Sits above the fields it fills in, where it reads as a starting point
         # rather than an afterthought.
         # Rows are counted rather than derived from list lengths: the field list
         # is user-configurable and the warranty block is optional, so arithmetic
         # on len(labels) breaks the moment either changes.
-        next_row = len(labels)
+        next_row = len(labels) + (1 if unit_keys else 0)
 
         picker_row = ttk.Frame(dialog)
         picker_row.grid(row=next_row, column=0, columnspan=2,
@@ -684,6 +745,7 @@ class ReceiptApp:
                     var.set(str(value).strip().lower() in ("1", "true", "yes"))
                 else:
                     var.set("" if value is None else str(value))
+            unit_state["units"] = existing.get(line_units.UNITS_KEY) or []
             option, number = self.match_warranty_option(
                 str(existing.get("warranty", "")), warranty_options)
             if option:
@@ -691,6 +753,7 @@ class ReceiptApp:
             if number:
                 warranty_number.set(number)
         on_warranty_type_change()
+        refresh_units_summary()
 
         def save():
             values = {}
@@ -707,6 +770,21 @@ class ReceiptApp:
             if warranty is None:
                 return
             values["warranty"] = warranty
+
+            if unit_keys:
+                qty = line_units.quantity_of(values)
+                units = line_units.normalise(
+                    {line_units.UNITS_KEY: unit_state["units"]}, unit_keys, qty)
+                gaps = line_units.describe_gaps(units, self.fields)
+                # A warning, not a refusal. Insisting on every serial before the
+                # line can be saved would be resented at a till, and the same
+                # argument settled overselling the same way: record it and say
+                # so, rather than blocking the sale.
+                if gaps and not messagebox.askyesno(
+                        "Some per-item details are blank",
+                        f"{gaps}.\n\nSave the line anyway?", parent=dialog):
+                    return
+                line_units.set_units(values, units)
 
             self.remember_sticky(values)
             row_values = self.item_to_row(values)
@@ -731,6 +809,94 @@ class ReceiptApp:
         dialog.grab_set()
         dialog.focus_set()
         self.root.wait_window(dialog)
+
+    def open_units_dialog(self, parent, keys, units, qty):
+        """Collect one row of values for each thing sold. Returns None if cancelled.
+
+        A line of quantity 3 is three physical units, and each carries its own
+        serial number -- and, where the shop labels its own stock, its own ID.
+        They are edited as *rows* rather than as two separate lists, which is
+        what stops the two drifting apart: clearing a serial clears that unit's
+        serial, it does not shift every ID below it up by one.
+
+        Scrolls rather than growing without limit, because a quantity of 50 is a
+        legitimate line and a 50-row dialog would run off the screen.
+        """
+        labels = {f["key"]: f.get("label", f["key"])
+                  for f in self.input_fields if f["key"] in keys}
+        for key in keys:
+            labels.setdefault(key, key)
+
+        existing = line_units.normalise({line_units.UNITS_KEY: units}, keys, qty)
+
+        win = tk.Toplevel(parent)
+        win.title("Per-item details")
+        win.transient(parent)
+        win.columnconfigure(0, weight=1)
+        win.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            win, padding=(12, 10, 12, 4), wraplength=460, justify=tk.LEFT,
+            text=f"One row for each of the {qty} item(s) on this line. Leave a box "
+                 f"blank if you do not have that detail yet -- the line still saves.",
+        ).grid(row=0, column=0, sticky=tk.W)
+
+        # A canvas is the only way to scroll a grid of widgets in tkinter.
+        canvas = tk.Canvas(win, highlightthickness=0, height=min(320, 40 + qty * 30))
+        scroll = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
+        table = ttk.Frame(canvas, padding=(12, 4))
+        table.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=table, anchor="nw")
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.grid(row=1, column=0, sticky=tk.NSEW)
+        scroll.grid(row=1, column=1, sticky=tk.NS)
+
+        ttk.Label(table, text="#", width=4).grid(row=0, column=0, sticky=tk.W)
+        for column, key in enumerate(keys, start=1):
+            ttk.Label(table, text=labels[key], font=("TkDefaultFont", 9, "bold")).grid(
+                row=0, column=column, padx=6, pady=(0, 4), sticky=tk.W)
+
+        variables = []
+        for index in range(qty):
+            ttk.Label(table, text=str(index + 1), width=4).grid(
+                row=index + 1, column=0, sticky=tk.W, pady=2)
+            row_vars = {}
+            for column, key in enumerate(keys, start=1):
+                var = tk.StringVar(value=existing[index].get(key, ""))
+                entry = ttk.Entry(table, textvariable=var, width=INPUT_WIDTH)
+                entry.grid(row=index + 1, column=column, padx=6, pady=2, sticky=tk.EW)
+                # A scanner types the value then presses Enter. Enter must move
+                # to the next box, not submit -- otherwise scanning the first
+                # serial closes the dialog and the rest are never asked for.
+                entry.bind("<Return>", lambda e: (e.widget.tk_focusNext().focus(), "break")[1])
+                row_vars[key] = var
+            variables.append(row_vars)
+
+        result = {"units": None}
+
+        def save():
+            result["units"] = [
+                {key: var.get().strip() for key, var in row.items()}
+                for row in variables
+            ]
+            win.destroy()
+
+        def clear_all():
+            for row in variables:
+                for var in row.values():
+                    var.set("")
+
+        buttons = ttk.Frame(win, padding=(12, 8))
+        buttons.grid(row=2, column=0, columnspan=2, sticky=tk.E)
+        ttk.Button(buttons, text="Save", command=save).pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="Clear all", command=clear_all).pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=4)
+
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        _safe_grab(win)
+        parent.wait_window(win)
+        return result["units"]
 
     def sticky_values(self):
         """Values remembered from the last item, for fields marked `sticky`.
@@ -777,6 +943,19 @@ class ReceiptApp:
                 continue
             var.set(str(value))
 
+    def tree_keys(self):
+        """The tree's column order: the input fields, then the extras.
+
+        `warranty` and `units` are stored but never typed into a column of their
+        own -- warranty has its own control, and units are edited in a sub-grid.
+        They ride along at the end so one ordering describes the whole row.
+        """
+        keys = [f["key"] for f in self.input_fields]
+        if self.warranty_enabled:
+            keys.append("warranty")
+        keys.append(line_units.UNITS_KEY)
+        return keys
+
     def row_to_item(self, values):
         """Tree row (a positional tuple) -> a dict keyed by field key.
 
@@ -785,20 +964,35 @@ class ReceiptApp:
         is what stops a reordered fields.json from silently shifting data into
         the wrong column.
         """
-        keys = [f["key"] for f in self.input_fields]
-        if self.warranty_enabled:
-            keys.append("warranty")
         item = {}
-        for key, value in zip(keys, list(values)):
+        for key, value in zip(self.tree_keys(), list(values)):
             item[key] = "" if value is None else value
+
+        # Units are the one non-string value on a row. The tree can only hold
+        # text, so they travel as JSON and are parsed back here -- in the same
+        # single place that owns the column ordering.
+        raw_units = item.get(line_units.UNITS_KEY, "")
+        item.pop(line_units.UNITS_KEY, None)
+        if raw_units:
+            try:
+                parsed = json.loads(raw_units)
+            except (ValueError, TypeError):
+                parsed = []
+            if isinstance(parsed, list):
+                line_units.set_units(item, [u for u in parsed if isinstance(u, dict)])
         return item
 
     def item_to_row(self, item):
         """The inverse of row_to_item: a dict -> the tree's positional tuple."""
-        keys = [f["key"] for f in self.input_fields]
-        if self.warranty_enabled:
-            keys.append("warranty")
-        return tuple(item.get(key, "") for key in keys)
+        units = item.get(line_units.UNITS_KEY) or []
+        encoded = json.dumps(units, ensure_ascii=False) if units else ""
+        row = []
+        for key in self.tree_keys():
+            if key == line_units.UNITS_KEY:
+                row.append(encoded)
+            else:
+                row.append(item.get(key, ""))
+        return tuple(row)
 
     def clean_field_value(self, field, raw):
         """Validate and normalise one entered value. Returns (value, error).
