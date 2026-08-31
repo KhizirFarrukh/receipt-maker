@@ -51,6 +51,30 @@ def _as_text(value):
     return "" if value is None else str(value)
 
 
+#: Receipt-level extras that are absent on most receipts. They are stored and
+#: restored only when set, so an ordinary sale carries no empty keys and the
+#: shape that comes back out of history matches the shape that went in.
+OPTIONAL_KEYS = ("payment_method", "shipments", "installment")
+
+
+def _optional(source):
+    """The optional receipt-level values that are actually present."""
+    out = {}
+    for key in OPTIONAL_KEYS:
+        value = source.get(key)
+        if not value:
+            continue
+        if key == "shipments":
+            value = [dict(s) for s in value if isinstance(s, dict)]
+        elif key == "installment":
+            value = dict(value)
+        else:
+            value = _as_text(value)
+        if value:
+            out[key] = value
+    return out
+
+
 def build_record(data, pdf_path="", signed=False, now=None):
     """Turn a generation's input into the record stored for it. Pure."""
     stamp = (now or datetime.datetime.now()).isoformat(timespec="seconds")
@@ -74,6 +98,7 @@ def build_record(data, pdf_path="", signed=False, now=None):
                 record[key] = _as_text(value)
         items.append(record)
     return {
+        **_optional(data),
         "history_version": HISTORY_VERSION,
         "recorded_at": stamp,
         "invoice_no": _as_text(data.get("inv_no")),
@@ -152,6 +177,7 @@ def to_form_data(entry):
     """Turn a stored record back into the shape the form and renderer expect."""
     customer = entry.get("customer") or {}
     return {
+        **_optional(entry),
         "inv_no": entry.get("invoice_no", ""),
         "date_str": entry.get("date", ""),
         "cust": customer.get("name", ""),

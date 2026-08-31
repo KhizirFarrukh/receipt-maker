@@ -116,6 +116,10 @@ SCHEMA_VERSION_KEY = "schema_version"
 
 TAX_MODES = ("exclusive", "inclusive")
 TAX_ROW_TYPES = ("percent", "fixed")
+#: What a payment-method charge *is*. Kept apart because they are reported
+#: differently: "tax" is a levy a government imposes and the shop remits, "fee"
+#: is a private company's service charge and is not tax at all.
+PAYMENT_KINDS = ("fee", "tax")
 TAX_BASES = ("subtotal_after_discount", "subtotal")
 GROUP_STYLES = ("thousand", "indian", "none")
 SYMBOL_POSITIONS = ("prefix", "suffix")
@@ -241,6 +245,15 @@ DEFAULT_APP_SETTINGS = {
     # merely untidy. Stock is committed *after* the receipt exists, because it
     # should record that goods actually left -- a failed render means nothing
     # left, so nothing should be deducted.
+    # What the customer pays with, and what that costs. Empty by default, so
+    # nothing is asked or charged until a shop configures its own methods.
+    #   kind: "tax" for a government levy the shop remits, "fee" for a
+    #         processor's service charge. They print and total separately --
+    #         recording a fee as tax overstates the tax collected.
+    #   percent and fixed may both be set ("2.9% + 0.30").
+    "payment": {
+        "methods": [],
+    },
     # Pay a deposit now and the rest monthly. Off by default: a shop that
     # never offers a plan should not be asked about one on every receipt.
     # The cash price stays the receipt total -- the plan is shown beside it,
@@ -416,6 +429,8 @@ DEFAULT_STRINGS = {
         "discounts": "Discounts",
         "shipping": "Shipping Fees",
         "shipment_marker": "Shipment {n} of {total}",
+        "payment_fee": "Payment charge",
+        "payment_tax": "Payment tax",
         "installment_down": "Down payment",
         "installment_monthly": "Monthly payment",
         "installment_total": "Total if paid in instalments",
@@ -767,6 +782,23 @@ def validate(settings, filename=None):
             "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
     if not isinstance(render.get("keep_rows_whole", True), bool):
         raise ConfigError("must be true or false", filename, "render.keep_rows_whole")
+
+    payment = settings.get("payment")
+    if not isinstance(payment, dict):
+        raise ConfigError("must be an object", filename, "payment")
+    if not isinstance(payment.get("methods", []), list):
+        raise ConfigError("must be a list of payment methods", filename,
+                          "payment.methods")
+    try:
+        import payment_methods
+        payment_methods.validate(settings, filename)
+    except ImportError:
+        pass
+    except Exception as exc:                     # noqa: BLE001 - re-raised as ConfigError
+        if type(exc).__name__ != "PaymentMethodError":
+            raise
+        raise ConfigError(str(exc).split(": ", 1)[-1], filename,
+                          "payment.methods") from exc
 
     installments = settings.get("installments")
     if not isinstance(installments, dict):

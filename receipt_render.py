@@ -599,12 +599,14 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
         fields=config.load_fields(),
         keep_rows_whole=settings.get("render", {}).get("keep_rows_whole", True),
         show_installments=settings.get("installments", {}).get("enabled", False),
+        payment_config=settings,
     )
 
 
 def render_receipt(data, templates, resource_base="", font_faces="", strings=None,
                    currency=None, terms=True, tax_config=None, fields=None,
-                   keep_rows_whole=True, show_installments=False):
+                   keep_rows_whole=True, show_installments=False,
+                   payment_config=None):
     """Pure render: (data, templates, strings, currency) -> html.
 
     No clock, no IO, no globals. Everything non-deterministic (the resource base
@@ -669,10 +671,21 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
 
     total = subtotal + total_tax - total_discount + ship + doc_tax_added
 
+    # What the customer pays with. Worked out here, before the breakdown, so a
+    # receipt whose only adjustment is a payment charge still shows a subtotal
+    # -- a charge and a total with nothing tying them together is worse than no
+    # breakdown at all. See payment_methods.py for why tax and fee stay apart.
+    payment_row = None
+    if payment_config:
+        import payment_methods
+        payment_row = payment_methods.row(
+            payment_config, data.get(payment_methods.METHOD_KEY), total, decimals)
+
     # Break the subtotal out only when there is something besides the line items
     # to show; otherwise TOTAL alone says everything.
     totals_rows = ""
-    if total_tax or total_discount or ship or doc_tax_rows or shipment_rows:
+    if (total_tax or total_discount or ship or doc_tax_rows or shipment_rows
+            or payment_row):
         breakdown = [(totals_labels.get("subtotal", "Subtotal"),
                       format_amount(subtotal, currency))]
         if total_tax:
@@ -713,6 +726,16 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
             _block(templates, "totals_row.html", {"label": label, "amount": amount})
             for label, amount in breakdown
         )
+
+    if payment_row:
+        label, kind, amount = payment_row
+        heading = totals_labels.get(
+            "payment_tax" if kind == "tax" else "payment_fee", "Payment charge")
+        totals_rows += _block(templates, "totals_row.html", {
+            "label": f"{heading} — {label}",
+            "amount": format_amount(amount, currency),
+        })
+        total += amount
 
     # The instalment plan, shown *beside* the cash total rather than replacing
     # it. The tax rows above apply to the goods; financing them is a separate

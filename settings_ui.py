@@ -139,6 +139,15 @@ LIST_SETTINGS = [
         ("value", "Value", "text", {}),
         ("applies_to", "Applies to", "choice", {"values": list(config.TAX_BASES)}),
     ]),
+    # `kind` is not cosmetic: a government levy the shop remits is "tax", a
+    # processor's service charge is "fee", and they are reported separately.
+    # Recording a fee as tax overstates the tax collected on every card sale.
+    ("Tax", "payment.methods", "Payment methods (percent and fixed may both apply)", [
+        ("label", "Method", "text", {}),
+        ("kind", "Charge is", "choice", {"values": list(config.PAYMENT_KINDS)}),
+        ("percent", "Percent", "text", {}),
+        ("fixed", "Fixed amount", "text", {}),
+    ]),
     ("Numbering", "receipt_types", "Receipt types", [
         ("label", "Label", "text", {}),
         ("code", "Code", "text", {}),

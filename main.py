@@ -245,6 +245,22 @@ class ReceiptApp:
         # Per-shipment shipping fees: [{"id": "1", "fee": "500"}]. Empty means
         # the single flat shipping fee beside it, which is the normal case.
         self.shipment_fees = []
+        # How the customer is paying. Only shown when methods are configured,
+        # so a shop that takes one kind of payment is never asked.
+        self.payment_method = tk.StringVar()
+        payment_options = []
+        try:
+            import payment_methods
+            payment_options = payment_methods.labels(config.load_app_settings())
+        except Exception:                        # noqa: BLE001 - never block a sale
+            payment_options = []
+        if payment_options:
+            ttk.Label(main_frame, text="Paid by").grid(
+                row=2, column=5, sticky=tk.W, padx=5, pady=2)
+            ttk.Combobox(main_frame, textvariable=self.payment_method,
+                         values=[""] + payment_options, state="readonly",
+                         width=16).grid(row=2, column=6, padx=5, pady=2,
+                                        sticky=tk.W)
         ttk.Entry(main_frame, textvariable=self.shipping, width=15).grid(row=2, column=4, padx=5, pady=2, sticky=tk.W)
 
         # --- items frame ---
@@ -1496,6 +1512,8 @@ class ReceiptApp:
             data["installment"] = self.order_plan
         if self.shipment_fees:
             data["shipments"] = self.shipment_fees
+        if self.payment_method.get().strip():
+            data["payment_method"] = self.payment_method.get().strip()
 
         try:
             import shipments
@@ -1732,6 +1750,7 @@ class ReceiptApp:
 
         self.order_plan = data.get("installment") or {}
         self.shipment_fees = data.get("shipments") or []
+        self.payment_method.set(data.get("payment_method", "") or "")
         self.refresh_order_plan_label()
         for child in self.items_tree.get_children():
             self.items_tree.delete(child)
