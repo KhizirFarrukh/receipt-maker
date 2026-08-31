@@ -237,8 +237,18 @@ class ReceiptApp:
         self.cust_email = tk.StringVar()
         ttk.Entry(main_frame, textvariable=self.cust_email, width=30).grid(row=2, column=1, columnspan=2, padx=5, pady=2)
 
-        ttk.Label(main_frame, text=self._money_field("Shipping")).grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
         self.shipping = tk.StringVar()
+        shipping_on = True
+        try:
+            shipping_on = bool(config.load_app_settings()
+                               .get("shipping", {}).get("enabled", True))
+        except Exception:                        # noqa: BLE001 - never block a sale
+            shipping_on = True
+        if shipping_on:
+            ttk.Label(main_frame, text=self._money_field("Shipping")).grid(
+                row=2, column=3, sticky=tk.W, padx=5, pady=2)
+            ttk.Entry(main_frame, textvariable=self.shipping, width=15).grid(
+                row=2, column=4, padx=5, pady=2, sticky=tk.W)
         # A plan covering the whole order. Kept as a plain dict rather than a Tk
         # variable because it is three numbers, not one, and nothing binds to it.
         self.order_plan = {}
@@ -261,7 +271,6 @@ class ReceiptApp:
                          values=[""] + payment_options, state="readonly",
                          width=16).grid(row=2, column=6, padx=5, pady=2,
                                         sticky=tk.W)
-        ttk.Entry(main_frame, textvariable=self.shipping, width=15).grid(row=2, column=4, padx=5, pady=2, sticky=tk.W)
 
         # Receipt-level custom fields, built from fields.json rather than
         # hardcoded -- until now the item dialog was configurable and the form

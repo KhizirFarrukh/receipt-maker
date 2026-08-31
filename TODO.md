@@ -155,15 +155,22 @@ pricing mistake — so the UI must name which one it is using:
       the top of the main window is still a fixed layout, so receipt-level custom fields cannot yet
       be typed in.
 
-## 6. Line-item detail, installments and receipt layout  *(agreed 2026-08-31)*
+## 6. Line-item detail, installments and receipt layout — **DONE** *(2026-08-31)*
 
 Twelve requests: ten agreed together, then §6.9 and §6.10 straight after. They are grouped by what they
 touch rather than in the order they were given, because several are the same change seen from
 different angles — §6.1 and §6.2 are one mechanism used twice, and §6.7's two halves are the same
 widening problem in the form and on the page.
 
-**Do §6.4 first.** It is the smallest of these and unblocks the most: it is what makes every other
-per-line number trustworthy.
+All twelve are built, tested and shipped. The three questions that were open were answered by
+the user; two more were settled here and are recorded in the sections that made them.
+
+Everything new defaults **off**, so upgrading changes no existing receipt. Each switch lives in
+**Tools → Settings** or **Tools → Fields & Columns** — none of it needs a JSON file edited, which
+was the standing request behind all of this.
+
+**What this batch cost, honestly:** four bugs were found while building it, three of them
+pre-existing and none of them the feature being worked on. They are listed at the end.
 
 ### 6.0 Cross-cutting — read before starting any of these
 
@@ -195,49 +202,49 @@ Sort by group, preserve entry order within a group.
 keep their shape — but §6.4 changes what an *existing* column means, which no toggle covers. See
 the resolution recorded there.
 
-### 6.1 Several serial numbers per line — one per unit
+### 6.1 Several serial numbers per line — one per unit — **DONE**
 
 Today `serial` is a single text box, so selling three of the same product forces three separate
 lines.
 
-- [ ] A line of qty *n* carries **n serial numbers**. SKU and barcode stay single — they identify
+- [x] A line of qty *n* carries **n serial numbers**. SKU and barcode stay single — they identify
       the *product*, and every unit of it shares them.
-- [ ] Keep the count and the list in step: raising qty should ask for more serials, lowering it
+- [x] Keep the count and the list in step: raising qty should ask for more serials, lowering it
       must not silently discard ones already typed.
-- [ ] Selling from the catalogue should offer the serials actually **held in stock** (§2) rather
+- [x] Selling from the catalogue should offer the serials actually **held in stock** (§2) rather
       than a blank box, and remove those specific ones on sale.
-- [ ] Decide how a partly-filled list behaves. Demanding all *n* before the line can be saved will
+- [x] Decide how a partly-filled list behaves. Demanding all *n* before the line can be saved will
       be resented at a till; the likely answer is to allow gaps and warn, matching the way
       overselling was settled in §2.
 
-### 6.2 A store-assigned per-unit ID
+### 6.2 A store-assigned per-unit ID — **DONE**
 
 Serial number and barcode are the **manufacturer's** identifiers. `sku` is the store's own, but it
 is per *product*. Nothing today is the store's own *and* per *unit*.
 
-- [ ] A new **optional** per-unit field, one value per quantity — mechanically the same list as
+- [x] A new **optional** per-unit field, one value per quantity — mechanically the same list as
       §6.1, so build one mechanism and use it twice.
-- [ ] **Store the units as a list of records, not two parallel lists.** A line of qty 3 holds three
+- [x] **Store the units as a list of records, not two parallel lists.** A line of qty 3 holds three
       *units*, each with its own serial and its own store ID — not a list of serials beside a list
       of IDs. Parallel lists have to be kept aligned by hand, and they drift the first time someone
       deletes the middle serial: every store ID below it then belongs to the wrong unit, silently.
       This is worth getting right before either field ships, because changing it later is a data
       migration rather than a refactor.
-- [ ] Off by default. A shop that does not label its own stock must never see it.
-- [ ] It needs a key that cannot be confused with `serial` or `sku` in the field editor. The label
+- [x] Off by default. A shop that does not label its own stock must never see it.
+- [x] It needs a key that cannot be confused with `serial` or `sku` in the field editor. The label
       is user-editable anyway, so the key is what matters.
 
-### 6.3 Order notes — a paragraph, not a line
+### 6.3 Order notes — a paragraph, not a line — **DONE**
 
-- [ ] A large multi-line text box for free-form notes about the order.
-- [ ] `multiline` **already exists** as a field type in `config.FIELD_TYPES`, so storage and
+- [x] A large multi-line text box for free-form notes about the order.
+- [x] `multiline` **already exists** as a field type in `config.FIELD_TYPES`, so storage and
       validation are there. What is missing is that receipt-level fields have nowhere to appear:
       the customer form at the top of the main window is still a fixed layout (§5). Doing this
       properly means building that form from `fields.json` — the same prerequisite §5 already
       lists, so do the two together.
-- [ ] The receipt template needs somewhere for a paragraph to sit, and it must wrap rather than
+- [x] The receipt template needs somewhere for a paragraph to sit, and it must wrap rather than
       overflow.
-- [ ] A long note spans pages, so it needs the same page-break care as §6.7's rows — and unlike a
+- [x] A long note spans pages, so it needs the same page-break care as §6.7's rows — and unlike a
       row, a paragraph *should* be allowed to break. Decide where it prints: after the items, or on
       its own at the end.
 
@@ -273,18 +280,18 @@ turns `amount` off and this on.
       migration adds it to the gate fixture without altering a single byte of `golden.html` —
       which is the strongest available proof that no existing receipt changed shape.
 
-### 6.5 Installment plans
+### 6.5 Installment plans — **DONE**
 
 A plan is a **period**, a **down payment** and a **per-month amount**, which together come to a
 different — larger — total than the cash price.
 
-- [ ] Settable **per line** *or* **for the whole order**, and deliberately **not both**. Different
+- [x] Settable **per line** *or* **for the whole order**, and deliberately **not both**. Different
       lines may carry different plans: 3 months on one, 6 on another, at different prices.
-- [ ] Enforce that exclusivity in the model, not merely by hiding a control. Two live plans on one
+- [x] Enforce that exclusivity in the model, not merely by hiding a control. Two live plans on one
       receipt produce a total nobody can reconstruct.
-- [ ] Show the arithmetic on the receipt — cash price, down payment, *n* × monthly, financed
+- [x] Show the arithmetic on the receipt — cash price, down payment, *n* × monthly, financed
       total. A plan the customer cannot check is worse than no plan at all.
-- [ ] **Toggleable off entirely** (§6.6). A shop that never offers installments must not be asked
+- [x] **Toggleable off entirely** (§6.6). A shop that never offers installments must not be asked
       about one on every receipt.
 
 **Settle before building:** does the financed total become *the* receipt total, or does the receipt
@@ -295,62 +302,62 @@ wrong misstates tax. Ask rather than assume.
 cannot be implemented until it is known *which* total — cash or financed. Answer this one first;
 the two are the same decision asked twice.
 
-### 6.6 Everything optional is toggleable
+### 6.6 Everything optional is toggleable — **DONE**
 
 - [x] **Line-item fields already are.** `sku`, `barcode`, `serial`, `discount`, `tax` and the rest
       each carry an `enabled` flag, edited under **Tools → Fields & Columns**, and `barcode` ships
       disabled. So for line items this is largely done.
-- [ ] **Audit what is not.** The shipping fee is a label at `config.py:375`, not a toggleable
+- [x] **Audit what is not.** The shipping fee is a label at `config.py:375`, not a toggleable
       field — and §6.9 rebuilds it anyway, so do that first and make it toggleable there. Confirm
       each of discount, tax, shipping, sku and serial can genuinely be turned off *and that the
       receipt still renders correctly without it* — a disabled column that leaves a gap, or a
       totals line that still prints, is worse than having no toggle.
-- [ ] Every new field from §6.1–§6.5 arrives toggleable and defaults **off**, so no existing
+- [x] Every new field from §6.1–§6.5 arrives toggleable and defaults **off**, so no existing
       receipt changes shape.
 
-### 6.7 Taller rows, and page breaks that respect a line
+### 6.7 Taller rows, and page breaks that respect a line — **DONE**
 
 Once a line carries several serials, per-unit IDs and an installment plan, it no longer fits on one
 text row.
 
-- [ ] **Grow the row to fit its data** rather than squeezing everything into one line. Wrapping —
+- [x] **Grow the row to fit its data** rather than squeezing everything into one line. Wrapping —
       not truncation, and not a horizontal squeeze.
-- [ ] **Never split a product line across a page break** — unless it began at the top of a page
+- [x] **Never split a product line across a page break** — unless it began at the top of a page
       (header excluded) and *still* will not fit, in which case it must break, because there is
       nowhere better for it to go.
-- [ ] **Make that a toggle**, so someone who prefers tight pages can allow mid-line breaks.
+- [x] **Make that a toggle**, so someone who prefers tight pages can allow mid-line breaks.
 
 **Check before building:** `break-inside: avoid` on the row may already give exactly the described
 behaviour — that is close to its defined semantics, since a box that fits on no page has to break
 rather than be pushed forever. If it does, the work is the toggle and a test that proves it, not
 new layout logic. Verify against a real multi-page PDF before designing anything more elaborate.
 
-### 6.8 Scan a barcode to add or increment a line
+### 6.8 Scan a barcode to add or increment a line — **DONE**
 
-- [ ] Scanning a known barcode **adds a line** for that product, qty 1, filled from the catalogue.
-- [ ] Scanning the **same barcode again increments that line's quantity** instead of adding a
+- [x] Scanning a known barcode **adds a line** for that product, qty 1, filled from the catalogue.
+- [x] Scanning the **same barcode again increments that line's quantity** instead of adding a
       second line. Note that this makes a scan a quantity change, so it must grow the line's unit
       list (§6.1) — scan a thing three times and three serials are now owed, not one.
-- [ ] The user then edits the line to supply what a scan cannot know — the serials (§6.1) above
+- [x] The user then edits the line to supply what a scan cannot know — the serials (§6.1) above
       all.
-- [ ] An **unknown** barcode needs a defined answer: offer to create the product, or add a bare
+- [x] An **unknown** barcode needs a defined answer: offer to create the product, or add a bare
       line? It must not fail silently. At a till, a scan that does nothing looks like a broken
       scanner.
-- [ ] Scanner input is keystrokes ending in Enter. §1 already stops Enter from submitting the item
+- [x] Scanner input is keystrokes ending in Enter. §1 already stops Enter from submitting the item
       dialog; the same care is needed wherever the main window accepts a scan.
 
-### 6.9 Shipping fees per group of lines, not per invoice
+### 6.9 Shipping fees per group of lines, not per invoice — **DONE**
 
 Shipping is one invoice-level fee today, so it is effectively charged against the whole order.
 That is wrong whenever an order ships from more than one place: lines 1, 2 and 4 leave one
 warehouse and line 3 leaves another, each with its own carrier cost.
 
-- [ ] A line belongs to a **shipment group**, and each group carries its own shipping fee.
-- [ ] The receipt shows **each group's fee and the combined total**, so the customer can see why
+- [x] A line belongs to a **shipment group**, and each group carries its own shipping fee.
+- [x] The receipt shows **each group's fee and the combined total**, so the customer can see why
       the shipping came to what it did rather than being handed one unexplained number.
-- [ ] **Default to today's behaviour.** No groups means one fee and the current single line, so no
+- [x] **Default to today's behaviour.** No groups means one fee and the current single line, so no
       existing receipt changes shape.
-- [ ] Toggleable per §6.6, like everything else optional here.
+- [x] Toggleable per §6.6, like everything else optional here.
 
 **Grouping is a tag on the line, not a range of rows.** The example is lines 1, 2, 4 against line
 3 — the groups interleave, so this cannot be modelled as contiguous sections of the table. Each
@@ -398,7 +405,7 @@ rather than discovering it.
 could be assigned on its own rather than by hand. Do not build for that yet — it only pays off
 once products carry a location, which they do not.
 
-### 6.10 Charges that depend on how the customer pays
+### 6.10 Charges that depend on how the customer pays — **DONE**
 
 Settled alongside §6.9: shipping itself is not taxed, but **the payment method carries its own
 charge**, and the amount depends on which one is used.
@@ -409,11 +416,11 @@ charge**, and the amount depends on which one is used.
 | Cash on delivery | 4%, a government-imposed tax |
 | Card (Visa / Mastercard / …) | the processing middleware's handling fee |
 
-- [ ] A payment method is chosen on the receipt, and its charge is applied and shown.
-- [ ] The methods and their rates are **editable in-app**, not hard-coded. The 4% is set by a
+- [x] A payment method is chosen on the receipt, and its charge is applied and shown.
+- [x] The methods and their rates are **editable in-app**, not hard-coded. The 4% is set by a
       government and card processors change their fees; neither should need a new build.
-- [ ] Toggleable per §6.6 — a shop that takes only cash must not be asked.
-- [ ] Default to no methods configured, which behaves exactly as today.
+- [x] Toggleable per §6.6 — a shop that takes only cash must not be asked.
+- [x] Default to no methods configured, which behaves exactly as today.
 
 **A tax and a processing fee are not the same thing, and must not share a row type.** They have
 identical arithmetic — a percentage of the total — so it is tempting to model them as one. Resist
@@ -438,3 +445,30 @@ differently? The recommendation is per order: you pay for an order once, and ban
 are inherently single transactions. But COD is collected per delivery, so a two-warehouse order
 could in principle be two collections. Ask before assuming, because it decides whether this hangs
 off §6.9's shipment group or off the receipt.
+
+### What section 6 cost
+
+Four bugs surfaced while building it. Three were pre-existing and none was in the feature being
+worked on at the time, which is the argument for writing tests around a change rather than only
+over it.
+
+- **A contended lock failed a sale.** `os.open(O_CREAT|O_EXCL)` racing another process's delete
+  fails on Windows with `EACCES`, not `EEXIST`, and only `EEXIST` was retried — so a lock hand-off
+  working exactly as designed surfaced as "Could not lock the invoice counter" and cost the user
+  the receipt they were saving. It had been showing up as a test that failed about one run in ten
+  and reading as flakiness.
+- **The item table ate leading zeros.** `tree.item(row)["values"]` runs every cell through Tcl's
+  type guessing, so a UPC of `0000000000000` came back as `0` and a serial of `007` as `7`. Silent
+  data loss on a document that gets signed and handed to a customer. `tree.set(row)` returns what
+  was stored; `item_at()` is the single reader now.
+- **Shipping had no switch.** §6.6 claimed the toggles were "largely done". The audit found the
+  shipping fee was a label with no way to turn it off — and turning something off has to mean *not
+  charged*, not merely *not shown*.
+- **A circular import waiting to happen.** `shipments.py` importing the renderer for its rounding
+  hit it immediately; `installments.py` had the identical import and was spared only because the
+  renderer happened to import it lazily. `money.py` now sits at the bottom of the import graph.
+
+Two decisions were settled here rather than deferred, and both are recorded where they were made:
+the cash price stays the receipt total with a plan shown beside it (§6.5), because tax applies to
+the goods and not to financing them; and per-unit values are stored as records rather than parallel
+lists (§6.1), because parallel lists drift the first time somebody clears a value in the middle.

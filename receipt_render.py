@@ -600,13 +600,14 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
         keep_rows_whole=settings.get("render", {}).get("keep_rows_whole", True),
         show_installments=settings.get("installments", {}).get("enabled", False),
         payment_config=settings,
+        show_shipping=settings.get("shipping", {}).get("enabled", True),
     )
 
 
 def render_receipt(data, templates, resource_base="", font_faces="", strings=None,
                    currency=None, terms=True, tax_config=None, fields=None,
                    keep_rows_whole=True, show_installments=False,
-                   payment_config=None):
+                   payment_config=None, show_shipping=True):
     """Pure render: (data, templates, strings, currency) -> html.
 
     No clock, no IO, no globals. Everything non-deterministic (the resource base
@@ -664,6 +665,10 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     # single flat fee it has always been when they are not.
     shipment_rows, ship = shipments.rows(
         data, items, decimals, flat_shipping=data.get("shipping", 0))
+    if not show_shipping:
+        # Off means not charged, not merely not shown. A fee hidden from the
+        # receipt but still added to the total is the worst of both.
+        shipment_rows, ship = [], quantize(0, decimals)
 
     # Document-level tax rows, on top of the per-line tax amounts above.
     doc_tax_rows, doc_tax_added = compute_tax_rows(

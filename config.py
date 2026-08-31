@@ -254,6 +254,12 @@ DEFAULT_APP_SETTINGS = {
     "payment": {
         "methods": [],
     },
+    # Shipping. A shop that never charges it should not have the box on the
+    # form or the row on the receipt -- it was a label with no switch until the
+    # section 6.6 audit went looking.
+    "shipping": {
+        "enabled": True,
+    },
     # Pay a deposit now and the rest monthly. Off by default: a shop that
     # never offers a plan should not be asked about one on every receipt.
     # The cash price stays the receipt total -- the plan is shown beside it,
@@ -790,6 +796,12 @@ def validate(settings, filename=None):
             "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
     if not isinstance(render.get("keep_rows_whole", True), bool):
         raise ConfigError("must be true or false", filename, "render.keep_rows_whole")
+
+    shipping = settings.get("shipping")
+    if not isinstance(shipping, dict):
+        raise ConfigError("must be an object", filename, "shipping")
+    if not isinstance(shipping.get("enabled", True), bool):
+        raise ConfigError("must be true or false", filename, "shipping.enabled")
 
     payment = settings.get("payment")
     if not isinstance(payment, dict):

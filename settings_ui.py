@@ -112,6 +112,10 @@ SETTINGS_SECTIONS = [
         ("render.fail_on_missing_image", "Treat a missing image as an error", "bool",
          {"help": "On: refuse to issue a receipt whose logo is missing."}),
         ("render.timeout_ms", "Render timeout (ms)", "int", {}),
+        ("shipping.enabled", "Charge shipping", "bool",
+         {"help": "Off removes the shipping box from the form and the "
+                  "shipping row from the receipt, and stops it being "
+                  "added to the total."}),
         ("installments.enabled", "Offer instalment plans", "bool",
          {"help": "Adds a plan button to the receipt and to each item. The "
                   "cash price stays the receipt total; the plan is shown "
