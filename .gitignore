@@ -280,6 +280,11 @@ invoices/.archive/
 products.json
 tests/fixtures/env/products.json
 
+# Unfinished receipts. Per-install work in progress, and it holds customer
+# names and phone numbers -- the same reason invoices/ is ignored.
+drafts.json
+tests/fixtures/env/drafts.json
+
 # Coverage output
 htmlcov/
 .coverage

@@ -151,8 +151,13 @@ pricing mistake — so the UI must name which one it is using:
             append-only record of what happened, and reassembling receipts from spreadsheet rows
             would mean inventing a rule for it. A search narrows the export, so a quarter's sales
             is a search away.
-- [ ] **H2 — save draft.** Store an in-progress receipt and restore it later. Consumes no invoice
-      number.
+- [x] **H2 — save draft. DONE.** *Save Draft* and *Drafts…* beside Generate. A sale that gets
+      interrupted keeps its work without issuing a receipt for a sale that has not happened.
+      **Consumes no invoice number** — that is the whole rule: numbers are reserved when a receipt
+      is *generated*, because a duplicate is unrecoverable, and a draft is not a receipt. The
+      number showing in the box is stored as `suggested_inv_no` rather than `inv_no`, so nothing
+      downstream can mistake a draft for something that has been numbered, and it is offered again
+      on restore. Stored in `drafts.json` (gitignored: it holds customer details).
 - [ ] **H6 (remainder) — image signature.** A scanned signature image on the receipt. **It is
       decorative, not cryptographic** — the README must keep saying so, or it reads as equivalent
       to the real PAdES signature.

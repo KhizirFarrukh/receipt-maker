@@ -955,6 +955,107 @@ class HistoryDialog:
             messagebox.showerror("Could not open", str(exc), parent=self.win)
 
 
+class DraftsDialog:
+    """The list of unfinished receipts. TODO.md §4 (H2).
+
+    Deliberately plain: a draft is picked up or thrown away, and anything more
+    elaborate here would be a second receipt editor.
+    """
+
+    def __init__(self, parent, on_load=None):
+        import drafts
+
+        self.parent = parent
+        self.on_load = on_load
+        self.drafts = drafts.load().get("drafts", [])
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("Drafts")
+        self.win.transient(parent)
+
+        frame = ttk.Frame(self.win, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frame, foreground="#64748b", justify=tk.LEFT, wraplength=520,
+            text="Unfinished receipts. None of these has used an invoice "
+                 "number — that happens when you generate."
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        columns = ("saved", "name", "number")
+        self.tree = ttk.Treeview(frame, columns=columns, show="headings",
+                                 height=10, selectmode="browse")
+        for key, label, width in (("saved", "Saved", 150),
+                                  ("name", "Draft", 300),
+                                  ("number", "Number it had", 130)):
+            self.tree.heading(key, text=label)
+            self.tree.column(key, width=width)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+
+        self.note = ttk.Label(frame, foreground="#64748b")
+        self.note.pack(anchor=tk.W, pady=(6, 0))
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor=tk.W, pady=(10, 0))
+        ttk.Button(buttons, text="Carry on with this",
+                   command=self.load).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Delete",
+                   command=self.delete).pack(side=tk.LEFT, padx=6)
+        ttk.Button(buttons, text="Close",
+                   command=self.win.destroy).pack(side=tk.LEFT)
+
+        self.refresh()
+        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+
+    def refresh(self):
+        import drafts
+
+        self.drafts = drafts.load().get("drafts", [])
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for draft in self.drafts:
+            self.tree.insert("", tk.END, values=(
+                str(draft.get("saved_at", "")).replace("T", " "),
+                draft.get("name", ""),
+                draft.get("suggested_inv_no", "")))
+        self.note.config(
+            text="" if self.drafts else "No drafts saved yet.")
+
+    def _selected(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("Drafts", "Select a draft first.",
+                                parent=self.win)
+            return None
+        return self.drafts[self.tree.index(selection[0])]
+
+    def load(self):
+        draft = self._selected()
+        if draft is None:
+            return
+        if self.on_load:
+            self.on_load(draft)
+        self.win.destroy()
+
+    def delete(self):
+        import drafts
+
+        draft = self._selected()
+        if draft is None:
+            return
+        if not messagebox.askyesno(
+                "Delete this draft?",
+                f"Delete {draft.get('name', '')}? This cannot be undone.",
+                parent=self.win):
+            return
+        drafts.remove(draft.get("draft_id"))
+        self.refresh()
+
+
+def open_drafts(parent, on_load=None):
+    dialog = DraftsDialog(parent, on_load)
+    parent.wait_window(dialog.win)
+
+
 def open_history(parent, on_load=None):
     dialog = HistoryDialog(parent, on_load)
     parent.wait_window(dialog.win)

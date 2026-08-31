@@ -381,6 +381,10 @@ class ReceiptApp:
         actions_frame.grid(row=4, column=0, columnspan=6, pady=15)
         self.generate_button = ttk.Button(actions_frame, text="Generate PDF Receipt", command=self.generate_pdf)
         self.generate_button.pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions_frame, text="Save Draft",
+                   command=self.save_draft).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions_frame, text="Drafts…",
+                   command=self.open_drafts).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions_frame, text="Clear Form", command=self.clear_form).pack(side=tk.LEFT, padx=5)
 
         # status label
@@ -1978,15 +1982,26 @@ class ReceiptApp:
         import receipt_history
 
         data = receipt_history.to_form_data(entry)
+        self.fill_form(data)
+        self.status_label.config(
+            text=f"Loaded {data['inv_no']} from history — edit and generate to reissue it")
+
+    def fill_form(self, data):
+        """Put a stored receipt back on the form.
+
+        Shared by the history reload and the draft restore: they differ only in
+        where the data came from, and two copies of this would drift the moment
+        a field was added.
+        """
         self.close_date_picker()
 
-        if data["receipt_type"] in self.type_labels:
+        if data.get("receipt_type") in self.type_labels:
             self.receipt_type.set(data["receipt_type"])
-        self.cust_name.set(data["cust"])
-        self.cust_phone.set(data["phone"])
-        self.cust_email.set(data["email"])
-        self.shipping.set(data["shipping"])
-        if data["date_str"]:
+        self.cust_name.set(data.get("cust", ""))
+        self.cust_phone.set(data.get("phone", ""))
+        self.cust_email.set(data.get("email", ""))
+        self.shipping.set(data.get("shipping", ""))
+        if data.get("date_str"):
             self.date.set(data["date_str"])
 
         self.order_plan = data.get("installment") or {}
@@ -1996,15 +2011,79 @@ class ReceiptApp:
         self.refresh_order_plan_label()
         for child in self.items_tree.get_children():
             self.items_tree.delete(child)
-        for item in data["items"]:
+        for item in data.get("items") or []:
             self.items_tree.insert("", tk.END, values=self.item_to_row(item))
 
         # Set the number last: refresh_invoice_number would otherwise overwrite
         # it, and _claim_invoice_number compares against the suggestion to decide
         # whether to consume a new number.
-        self.inv_no.set(data["inv_no"])
+        self.inv_no.set(data.get("inv_no", ""))
+
+    def current_form_data(self):
+        """Everything typed in, in the shape generation and drafts both use.
+
+        Reads the widgets and *nothing else* -- in particular it does not touch
+        the invoice counter, which is what lets a draft be saved without
+        consuming a number.
+        """
+        items = [self.item_at(row) for row in self.items_tree.get_children()]
+        data = {
+            "inv_no": self.inv_no.get().strip(),
+            "date_str": self.date.get().strip(),
+            "cust": self.cust_name.get().strip(),
+            "phone": self.cust_phone.get().strip(),
+            "email": self.cust_email.get().strip(),
+            "receipt_type": self.receipt_type.get(),
+            "shipping": self.shipping.get().strip(),
+            "items": items,
+        }
+        if self.order_plan:
+            data["installment"] = self.order_plan
+        if self.shipment_fees:
+            data["shipments"] = self.shipment_fees
+        if self.payment_method.get().strip():
+            data["payment_method"] = self.payment_method.get().strip()
+        for key, value in self.receipt_field_values().items():
+            if str(value).strip():
+                data[key] = value
+        return data
+
+    def save_draft(self):
+        """Keep an unfinished receipt without issuing it.
+
+        Consumes no invoice number: a draft is not a receipt. The number showing
+        in the box is kept as a suggestion and offered again on restore.
+        """
+        import drafts
+
+        data = self.current_form_data()
+        if not data["cust"] and not data["items"]:
+            messagebox.showinfo(
+                "Nothing to save",
+                "Fill in a customer or add an item first.", parent=self.root)
+            return
+        try:
+            record = drafts.add(data)
+        except Exception as exc:                 # noqa: BLE001 - reported
+            show_error(self.root, "Could not save the draft", str(exc),
+                       traceback.format_exc())
+            return
         self.status_label.config(
-            text=f"Loaded {data['inv_no']} from history — edit and generate to reissue it")
+            text=f"Draft saved: {record['name']} — no invoice number was used")
+
+    def open_drafts(self):
+        """Pick a saved draft to carry on with, or delete one."""
+        import settings_ui
+        settings_ui.open_drafts(self.root, on_load=self.load_draft)
+
+    def load_draft(self, draft):
+        import drafts
+
+        data = drafts.to_form_data(draft)
+        self.fill_form(data)
+        self.status_label.config(
+            text=f"Restored draft: {draft.get('name', '')} — "
+                 f"generate when you are ready")
 
     def open_signing_keys_dialog(self):
         """Create or import the key that signs receipts, without a command line."""
