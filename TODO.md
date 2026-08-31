@@ -175,9 +175,15 @@ v2, both with a `migrate()` that runs on load and persists once. New fields do n
 existing install by magic — they arrive by migration, added disabled, exactly as `barcode` was in
 §1. Forgetting this means the feature works on a fresh install and is invisible on the user's.
 
-**Several of these regenerate the golden file, not just §6.4.** §6.7 (row height), §6.9
-(reordering) and §6.10 (a new totals row) all change rendered HTML. That is expected — but the
-rule stands: inspect the diff, justify it in the commit, never regenerate to make a test pass.
+**Several of these will regenerate the golden file.** §6.7 (row height), §6.9 (reordering) and
+§6.10 (a new totals row) all change rendered HTML. That is expected — but the rule stands: inspect
+the diff, justify it in the commit, never regenerate to make a test pass.
+
+§6.4 was expected to be one of them and **turned out not to be**, which is worth copying. Because
+the new column ships disabled, the migration added it to the gate fixture without altering a byte
+of `golden.html`. An untouched golden is far better evidence that nothing changed shape than a
+regenerated one whose diff someone eyeballed — so prefer designing these features to leave it
+alone.
 
 **Reordering must be a *stable* sort (§6.9).** Determinism is a tested invariant
 (`tests/test_stage0.py:73`) and the golden gate compares bytes: the same receipt data must render
@@ -235,30 +241,35 @@ is per *product*. Nothing today is the store's own *and* per *unit*.
       row, a paragraph *should* be allowed to break. Decide where it prints: after the items, or on
       its own at the end.
 
-### 6.4 A real per-line total — **do this one first**
+### 6.4 A real per-line total — **DONE**
 
-`receipt_render.py:875` computes the line amount as `qty × price` and nothing else, and
-`receipt_render.py:631` builds the subtotal the same way. A line carrying a discount or a tax
-therefore shows a figure that is **not what that line actually came to** — the adjustments surface
+The `amount` column computed `qty × price` and nothing else, so a line carrying a discount or a
+tax printed a figure that was **not what that line actually came to** — the adjustments surfaced
 only in the totals block far below.
 
-- [ ] The line total must account for that line's own discount and tax, and for its installment
-      plan (§6.5) where it has one. **Shipping is the exception** — it is charged per shipment
-      group, not per line (§6.9), and apportioning it across lines would invent a split the
-      customer cannot check.
-- [ ] Keep the gross visible too. A customer shown only the net cannot check that the discount
-      was applied — so both columns, each toggleable per §6.6.
-- [ ] **Add a new column; do not redefine the existing one.** This resolves a contradiction found
-      on review: §6.6 promises nothing changes shape for existing receipts, but redefining what
+Shipped as `line_total`, a **second** column beside `amount` rather than a redefinition of it, and
+disabled by default. Enable it under **Tools → Fields & Columns**; a shop that wants only the net
+turns `amount` off and this on.
+
+- [x] The line total accounts for that line's own discount and tax. **Shipping is the
+      exception** — it is charged per shipment group, not per line (§6.9), and apportioning it
+      across lines would invent a split the customer cannot check.
+- [ ] *Still open:* the installment part (§6.5), which cannot be added until the cash-versus-
+      financed question there is answered.
+- [x] The gross stays visible. A customer shown only the net cannot check that the discount was
+      applied — so both columns exist, each toggleable per §6.6.
+- [x] **Added as a new column rather than redefining the existing one.** This resolved a
+      contradiction found on review: §6.6 promises nothing changes shape for existing receipts, but redefining what
       `amount` means would change the figure printed on *every* receipt already being issued —
       something no toggle covers, because the column is already on. So `amount` keeps its present
       meaning (`qty × price`, the gross) and the line total arrives as a **new field, off by
       default**. A shop that wants only the net can then turn `amount` off and the new column on.
-- [ ] **Use the existing Decimal path**: round each line, then sum the rounded values. Do not
-      re-derive it. That rule is an invariant (ARCHITECTURE.md), and breaking it makes a receipt
-      disagree with itself by a penny.
-- [ ] **This changes the golden file.** Regenerating it is correct here — but inspect the diff
-      first and justify it in the commit (PITFALLS.md).
+- [x] **Uses the existing Decimal path**: each part rounded, then added, matching the way the
+      totals block keeps three separate running totals. `SumsMatchTheTotalsBlock` in
+      `tests/test_line_total.py` asserts the column adds up to the figures below it.
+- [x] **The golden file did not change after all.** The new column ships disabled, so the
+      migration adds it to the gate fixture without altering a single byte of `golden.html` —
+      which is the strongest available proof that no existing receipt changed shape.
 
 ### 6.5 Installment plans
 

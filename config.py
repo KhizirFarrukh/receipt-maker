@@ -306,7 +306,7 @@ RESERVED_FIELD_KEYS = frozenset({
 #: get it too. The lists are replaced wholesale on load rather than merged (their
 #: order is the column order), so without a migration a new built-in would only
 #: ever reach brand-new installs.
-FIELDS_SCHEMA_VERSION = 2
+FIELDS_SCHEMA_VERSION = 3
 
 DEFAULT_FIELDS = {
     SCHEMA_VERSION_KEY: FIELDS_SCHEMA_VERSION,
@@ -332,6 +332,12 @@ DEFAULT_FIELDS = {
         {"key": "tax", "label": "Tax", "type": "amount",
          "enabled": True, "optional_column": True},
         {"key": "amount", "label": "Amount", "type": "computed", "enabled": True},
+        # What the line actually came to: gross, plus its own tax, less its own
+        # discount. `amount` above stays the gross, because redefining it would
+        # change the figure on every receipt already being issued. Shipped
+        # disabled; a shop wanting only the net turns `amount` off and this on.
+        {"key": "line_total", "label": "Line Total", "type": "computed",
+         "enabled": False},
     ],
     # An option containing "#" prompts for a positive whole number when chosen,
     # so one entry covers "12 Months", "24 Months" and so on.
@@ -1042,6 +1048,18 @@ def migrate_fields(fields, version):
             index = next((i + 1 for i, f in enumerate(items)
                           if isinstance(f, dict) and f.get("key") == "sku"), len(items))
             items.insert(index, dict(defaults["barcode"]))
+            changed = True
+
+    if version < 3:
+        # v3 introduced the per-line total. It goes after `amount` rather than
+        # replacing it: the two are different figures, and taking over `amount`
+        # would change what prints on receipts already in use.
+        if "line_total" not in present:
+            defaults = {f["key"]: f for f in DEFAULT_FIELDS["line_item_fields"]}
+            items = fields.setdefault("line_item_fields", [])
+            index = next((i + 1 for i, f in enumerate(items)
+                          if isinstance(f, dict) and f.get("key") == "amount"), len(items))
+            items.insert(index, dict(defaults["line_total"]))
             changed = True
 
     if fields.get(SCHEMA_VERSION_KEY) != FIELDS_SCHEMA_VERSION:

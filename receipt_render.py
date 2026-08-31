@@ -402,6 +402,29 @@ def quantize(value, decimals=None):
     return to_decimal(value).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
 
 
+def line_gross(item):
+    """qty x price for one line, unrounded. The `amount` column's value."""
+    return to_decimal(item.get("qty", 0)) * to_decimal(item.get("price", 0))
+
+
+def line_total(item, decimals=None):
+    """What one line actually came to: gross, plus its tax, less its discount.
+
+    Each part is rounded *before* they are added, which is not fussiness -- the
+    totals block sums the rounded gross, the rounded taxes and the rounded
+    discounts as three separate running totals. Rounding the sum instead would
+    let this column differ from the figures below it by a penny on some receipts
+    and not others, which is exactly the kind of discrepancy a customer notices
+    and nobody can explain.
+
+    Shipping is deliberately absent: it is charged per shipment, across several
+    lines at once, so charging it to a line would mean inventing a split.
+    """
+    return (quantize(line_gross(item), decimals)
+            + quantize(item.get("tax", 0), decimals)
+            - quantize(item.get("discount", 0), decimals))
+
+
 def group_digits(digits, style="thousand"):
     """Insert digit-group separators into a run of integer digits.
 
@@ -482,7 +505,13 @@ TYPE_PRESENTATION = {
 }
 
 #: Keys whose value the renderer computes rather than reads from the item.
-DERIVED_KEYS = {"amount"}
+#:
+#: `amount` is the gross -- qty x price, nothing else. `line_total` is what the
+#: line actually came to once its own discount and tax are applied. Both exist
+#: because redefining `amount` would silently change the figure printed on every
+#: receipt already being issued; a shop that wants only the net turns `amount`
+#: off and `line_total` on. See TODO.md section 6.4.
+DERIVED_KEYS = {"amount", "line_total"}
 
 #: Fallback for "this line carries no warranty, print no note". The real value
 #: comes from fields.json (`warranty.none_option`) so a shop that words it
@@ -628,8 +657,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
 
     # --- totals ---------------------------------------------------------
     # Sum the *rounded* line values so the printed figures add up on the page.
-    subtotal = sum((quantize(to_decimal(i.get("qty", 0)) * to_decimal(i.get("price", 0)), decimals)
-                    for i in items), Decimal("0"))
+    subtotal = sum((quantize(line_gross(i), decimals) for i in items), Decimal("0"))
     total_discount = sum((quantize(i.get("discount", 0), decimals) for i in items), Decimal("0"))
     total_tax = sum((quantize(i.get("tax", 0), decimals) for i in items), Decimal("0"))
     ship = quantize(data.get("shipping", 0), decimals)
@@ -871,8 +899,10 @@ def _cell_context(item, field, empty_cell="-", currency=None, group=True,
     key = field["key"]
     style = TYPE_PRESENTATION.get(field.get("type", "text"), ("", "plain"))[1]
 
-    if key in DERIVED_KEYS:
-        raw = to_decimal(item.get("qty", 0)) * to_decimal(item.get("price", 0))
+    if key == "line_total":
+        raw = line_total(item, decimals)
+    elif key in DERIVED_KEYS:
+        raw = line_gross(item)
     else:
         raw = item.get(key, "")
 

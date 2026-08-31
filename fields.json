@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "receipt_fields": [],
   "line_item_fields": [
     {
@@ -59,6 +59,12 @@
       "label": "Amount",
       "type": "computed",
       "enabled": true
+    },
+    {
+      "key": "line_total",
+      "label": "Line Total",
+      "type": "computed",
+      "enabled": false
     }
   ],
   "warranty": {

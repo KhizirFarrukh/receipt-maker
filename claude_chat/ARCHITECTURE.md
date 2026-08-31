@@ -89,7 +89,14 @@ or the filesystem inside it — inject those from `build_html`.
    but only certificates this install actually archived.
 10. **Nothing optional may fail a receipt.** History, stock and logging all warn and carry on. The
     signed PDF is the legal artifact.
-11. **`row_to_item` / `item_to_row` in `main.py` are the only place** the item tree's positional
+11. **`amount` is the gross; `line_total` is the net.** `amount` is `qty × price` and must
+    stay that way — it is on by default, so redefining it would change the figure printed on
+    every receipt already in use. `line_total` adds the line's own tax and takes off its own
+    discount, rounding each part *before* adding, because the totals block sums the three as
+    separate running totals. Rounding the sum instead makes the column disagree with the
+    totals below it by a penny on some receipts and not others. Shipping is never in either:
+    it is charged per shipment, across several lines.
+12. **`row_to_item` / `item_to_row` in `main.py` are the only place** the item tree's positional
     storage maps to field keys. Drift there silently puts values in the wrong column.
 
 ## The test suite
@@ -108,6 +115,7 @@ HANDOFF.md breaks down what the uncovered remainder is and why.
 | `test_history.py`, `test_products.py` | Receipt history; catalogue, variants, pricing |
 | `test_cli.py` | `cli.py`, `keygen.py`, `verify_receipt.py` — exit codes are the contract |
 | `test_gui_dialogs.py`, `test_gui_main.py`, `test_gui_internals.py` | The GUI, driven headlessly |
+| `test_line_total.py` | The per-line total: arithmetic, that it sums to the totals, migration |
 | `test_edges.py` | The branches the per-feature files miss: parse failures, odd inputs |
 | `test_regressions.py` | One test per bug found, saying what it protects |
 | `gate_env.py` | Shared setup that pins tests to the fixture config |
@@ -126,6 +134,7 @@ class name**, because `styles.css` is embedded in the rendered HTML.
   installs get the neutral `$`.
 - v3 → v4: added `invoice`, preserving the `INV-` prefix and start number verbatim.
 
-`fields.json` is at **v2** (v2 added the product barcode, disabled).
+`fields.json` is at **v3** (v2 added the product barcode; v3 added the per-line total). Both
+arrived disabled, so an upgrade changes no existing receipt.
 
 A config written by a *newer* version is refused with a clear message rather than downgraded.

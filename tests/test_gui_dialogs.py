@@ -640,6 +640,32 @@ class FieldsDialogConflicts(DialogTestCase):
         self.assertEqual(fired, [1])
 
 
+class LineTotalIsReachableFromTheUI(DialogTestCase):
+    """The point of the whole in-app-editing effort: no JSON editing required."""
+
+    def test_it_is_listed_among_the_line_item_fields(self):
+        dialog = settings_ui.FieldsDialog(self.root)
+        keys = [r.get("key") for r in dialog.item_editor.records]
+        self.assertIn("line_total", keys)
+        dialog.win.destroy()
+
+    def test_switching_it_on_reaches_disk(self):
+        dialog = settings_ui.FieldsDialog(self.root)
+        for record in dialog.item_editor.records:
+            if record.get("key") == "line_total":
+                record["enabled"] = True
+        dialog.save()
+        saved = {f["key"]: f for f in config.load_fields()["line_item_fields"]}
+        self.assertTrue(saved["line_total"]["enabled"])
+
+    def test_it_arrives_switched_off(self):
+        dialog = settings_ui.FieldsDialog(self.root)
+        line_total = next(r for r in dialog.item_editor.records
+                          if r.get("key") == "line_total")
+        self.assertFalse(line_total.get("enabled", True))
+        dialog.win.destroy()
+
+
 class SettingsDialogRemainder(DialogTestCase):
     def test_the_saved_callback_fires(self):
         fired = []
