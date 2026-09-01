@@ -32,6 +32,8 @@ and most of the suite run without a display.
 | `installments.py` | Instalment plans: period, deposit, monthly. Scope exclusivity and the financed total. |
 | `shipments.py` | Shipping charged per group of lines: grouping, the stable sort, the neutral markers. |
 | `payment_methods.py` | What the customer pays with and what it costs, keeping a government levy and a processor's fee apart. |
+| `csv_io.py` | CSV views: products both ways, receipt history out only. |
+| `drafts.py` | Unfinished receipts. Consumes no invoice number. |
 | `cli.py` | Headless entry point. `--render-html` (the golden target), `--check`, `--config-dir`. |
 | `keygen.py`, `verify_receipt.py` | Command-line signing helpers; the reference verifier. |
 
@@ -110,19 +112,23 @@ or the filesystem inside it — inject those from `build_html`.
     reporting: recording a processor's fee as tax overstates the tax collected.
 16. **Voiding returns stock but never frees the invoice number.** A count can be recounted; a
     number that has been in a customer's hands cannot be un-issued.
-17. **`amount` is the gross; `line_total` is the net.** `amount` is `qty × price` and must
+17. **A module imported only inside a function must be named in `receipt_maker.spec`.**
+    PyInstaller's static analysis is least reliable about that shape, and a module it misses
+    breaks *only* the packaged build -- which starts fine and dies when somebody opens the
+    feature. Four of the seven modules added recently were that shape.
+18. **`amount` is the gross; `line_total` is the net.** `amount` is `qty × price` and must
     stay that way — it is on by default, so redefining it would change the figure printed on
     every receipt already in use. `line_total` adds the line's own tax and takes off its own
     discount, rounding each part *before* adding, because the totals block sums the three as
     separate running totals. Rounding the sum instead makes the column disagree with the
     totals below it by a penny on some receipts and not others. Shipping is never in either:
     it is charged per shipment, across several lines.
-18. **`tree_keys()` in `main.py` is the only place** the item tree's positional
+19. **`tree_keys()` in `main.py` is the only place** the item tree's positional
     storage maps to field keys. Drift there silently puts values in the wrong column.
 
 ## The test suite
 
-**838 tests, 92.3% coverage**, floor enforced at 80% by `.coveragerc`. Branch coverage is on.
+**1358 tests, 90.4% coverage**, floor enforced at 80% by `.coveragerc`. Branch coverage is on.
 HANDOFF.md breaks down what the uncovered remainder is and why.
 
 | File | Covers |
@@ -146,6 +152,11 @@ HANDOFF.md breaks down what the uncovered remainder is and why.
 | `test_order_notes.py` | Order notes, and the receipt-level form built from `fields.json` |
 | `test_toggles.py` | The section 6.6 audit: every switch, checked against the rendered page |
 | `test_voiding.py` | Voiding: stock returns, the invoice number does not |
+| `test_csv_io.py` | CSV round trip, merge-by-SKU, and that history has no import |
+| `test_drafts.py` | Drafts, and five tests that the invoice counter never moves |
+| `test_doctor.py` | The environment check: every check runs, warnings are not failures |
+| `test_signature_image.py` | The scanned signature, and that it is never called cryptographic |
+| `test_stage8.py` | Filename patterns, DUPLICATE, the terms selector, pinned deps |
 | `test_pricing_ui.py` | Margin / markup / discount, and that both numbers are always shown |
 | `test_edges.py` | The branches the per-feature files miss: parse failures, odd inputs |
 | `test_regressions.py` | One test per bug found, saying what it protects |
