@@ -109,6 +109,11 @@ def validate(data, items=None):
     return data
 
 
+#: The implicit shipment that untagged lines belong to. Not a real tag -- it
+#: never appears on a line -- but the rest of the order still ships somehow.
+UNGROUPED = ""
+
+
 def rows(data, items=None, decimals=None, flat_shipping=0):
     """Per-shipment shipping rows and their total. Returns (rows, total).
 
@@ -118,19 +123,30 @@ def rows(data, items=None, decimals=None, flat_shipping=0):
 
     With no groups this returns the single flat fee the receipt has always had,
     so an existing receipt is unchanged.
+
+    **A partly-tagged order keeps its flat fee.** Tagging some lines and not
+    others is the ordinary way to arrive at this: one item comes from the other
+    warehouse and the rest ship as usual. Dropping the flat fee there would
+    undercharge the customer with nothing on the receipt to show for it, which
+    is the worst way for this to be wrong.
     """
     items = data.get("items") if items is None else items
     used = groups_used(items)
+    flat = quantize(flat_shipping, decimals)
     if not used:
-        total = quantize(flat_shipping, decimals)
-        return [], total
+        return [], flat
 
     table = fee_table(data)
+    ungrouped = [item for item in items or [] if not group_of(item)]
+
+    entries = [(tag, quantize(table.get(tag, 0), decimals)) for tag in used]
+    if ungrouped and flat:
+        entries.append((UNGROUPED, flat))
+
     out = []
     total = Decimal("0")
-    for position, tag in enumerate(used, start=1):
-        fee = quantize(table.get(tag, 0), decimals)
-        out.append((tag, position, len(used), fee))
+    for position, (tag, fee) in enumerate(entries, start=1):
+        out.append((tag, position, len(entries), fee))
         total += fee
     return out, total
 

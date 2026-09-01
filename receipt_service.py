@@ -171,13 +171,28 @@ def build_pdf_filename(inv_no, date_str, cust, email, phone, receipt_type=""):
         "receipt_type": receipt_type,
     }
 
-    def replace(match):
-        return sanitize_filename_part(values.get(match.group(1), ""))
+    # Built from the pattern's own segments rather than substituted-then-tidied.
+    # Tidying afterwards cannot tell a separator the pattern supplied from one
+    # that is part of somebody's name: collapsing runs of "-_ ." turned
+    # "Dr. Smith" into "Dr.Smith". Walking the segments means a blank value
+    # drops the separator *the pattern* put beside it and never touches a
+    # character that came from a value.
+    segments = re.split(r"(\{[^{}]*\})", filename_pattern())
+    parts = []
+    for segment in segments:
+        if segment.startswith("{") and segment.endswith("}"):
+            value = sanitize_filename_part(values.get(segment[1:-1], ""))
+            if value:
+                parts.append(value)
+            elif parts and not parts[-1].strip("-_ ."):
+                parts.pop()             # the separator just before an empty value
+        elif segment:
+            parts.append(segment)
 
-    name = re.sub(r"\{([^{}]*)\}", replace, filename_pattern())
-    # A blank value leaves a separator with nothing beside it: "INV-1--Ada" or
-    # a trailing dash. Collapse them rather than printing the gap.
-    name = re.sub(r"[-_ .]{2,}", lambda m: m.group(0)[0], name).strip("-_ .")
+    while parts and not parts[-1].strip("-_ ."):
+        parts.pop()                     # a trailing separator with nothing after it
+
+    name = "".join(parts).strip("-_ .")
     return avoid_reserved_name(name or sanitize_filename_part(inv_no)) + ".pdf"
 
 
