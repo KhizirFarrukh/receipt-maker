@@ -119,7 +119,7 @@ Remove-Item -LiteralPath "tests\fixtures\env\Templates" -Recurse -Force -ErrorAc
 & $py -m coverage html             # browsable report in htmlcov/
 ```
 
-**1204 tests, 91.4% coverage**, with a floor of 80% enforced by `.coveragerc`. Branch coverage is
+**1358 tests, 90.4% coverage**, with a floor of 80% enforced by `.coveragerc`. Branch coverage is
 on, so an untested `else` counts as a miss.
 
 `money`, `shipments`, `keygen` and `verify_receipt` are at 100%; `installments` 98%,
@@ -170,25 +170,27 @@ has been regenerated exactly **once**, deliberately, when receipt-field styling 
 
 ## What to do next
 
-See [`../TODO.md`](../TODO.md). **§6 is complete** — all twelve items of the 2026-08-31 batch are
-built and tested, along with §3 (the pricing UI) and the void that §2 was missing.
+See [`../TODO.md`](../TODO.md). **The backlog is essentially done** — §6 (all twelve items), §3
+(the pricing UI), the void §2 was missing, CSV in and out, save-draft, `--doctor`, the image
+signature and Stage 8 polish have all shipped.
 
-Everything §6 added defaults **off**, so an upgrade changes no existing receipt, and every switch is
-in **Tools → Settings** or **Tools → Fields & Columns**. That was the standing request behind the
-whole batch: no JSON file should need editing.
+Everything added defaults **off**, so an upgrade changes no existing receipt, and every switch is in
+**Tools → Settings** or **Tools → Fields & Columns**. That was the standing request behind all of
+it: no JSON file should need editing.
 
-What is left, in rough order of value:
+What is genuinely left:
 
-1. **CSV import/export** — for the product catalogue (§2) and as an export view over the receipt
-   history (§4). JSON stays the source of truth; CSV is the view.
-2. **Save draft** (§4, H2) — store an in-progress receipt and restore it. Consumes no invoice
-   number.
-3. **`--doctor`** (§5, Stage 7) — the environment check: missing browser, unreadable key, expiring
-   certificate, read-only output folder.
-4. **Image signature** (§4, H6) — a scanned signature on the receipt. Decorative, *not*
-   cryptographic, and the README has to keep saying so.
-5. Stage 8 polish: configurable filename patterns, reprint with a DUPLICATE badge, restore default
-   templates, a pinned Playwright version.
+1. **No bundled font.** `fonts.family` works, but no OFL font ships, so a receipt can still look
+   slightly different on another machine. A licensing and asset choice rather than code.
+2. **Untracking this shop's own config**, *if this repo is ever published*: `appsettings.json`,
+   `fields.json` and `filename_config.json` are tracked, so a clone inherits one business's
+   settings. Ship `.example` copies instead. Nothing to do while it stays private.
+3. **Serial-number selection** (§2) — sell a *specific* held serial rather than typing one, now
+   that a line carries one serial per unit.
+4. **A low-stock warning at the point of sale**, rather than only in the log.
+5. **H7 audit** — re-read the README for any "edit this JSON file" instruction that now has an
+   in-app equivalent.
 
-Smaller leftovers: neutral wording in `Templates/terms.html`, no bundled OFL font, and
-`document.title` still being a literal in `receipt_info.html`.
+The terms page and `document.title` were on this list and are done: the shipped `terms.html` is
+generic now, with the previous wording kept in `terms.chawlatech.html` and `terms_page.template`
+pointing at it, and the heading is `strings.json → totals.document_title`.

@@ -19,7 +19,14 @@ signing_binaries = []
 # the hardest place to notice it.
 signing_hiddenimports = ["receipt_signing", "settings_ui", "invoice_counter",
                          "product_catalogue",
-                         "receipt_history"]
+                         "receipt_history",
+                         # Imported inside functions rather than at module top
+                         # level, which is exactly the shape static analysis is
+                         # least reliable about. Listing them costs nothing and
+                         # the alternative is a packaged build that starts fine
+                         # and dies when somebody opens the drafts list.
+                         "money", "line_units", "installments", "shipments",
+                         "payment_methods", "csv_io", "drafts"]
 for _pkg in ("pyhanko", "pyhanko_certvalidator", "asn1crypto", "oscrypto",
              "cryptography", "certifi", "tzlocal", "uritools"):
     _d, _b, _h = collect_all(_pkg)

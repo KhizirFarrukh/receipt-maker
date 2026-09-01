@@ -32,8 +32,8 @@ things and do not share a field:
       deleted *after* that migration stays deleted — the version stamp moves with the file.
 - [x] Scanner support: Enter in an item field advances to the next field rather than submitting,
       so a scanner that types-then-Enters cannot save a line containing only a barcode.
-- [ ] Once the catalogue exists (§2), scanning a barcode should fill the whole line. **Now
-      specified in §6.8** — a scan adds the line outright and a rescan increments it.
+- [x] **Scanning fills the whole line — DONE in §6.8.** A scan adds the line from the catalogue
+      and a rescan increments its quantity.
 
 ## 2. Product catalogue and inventory  *(large — the main new feature)*
 
@@ -206,8 +206,7 @@ pricing mistake — so the UI must name which one it is using:
             them and ship `.example` copies. If it stays private, nothing needs doing.
 - [ ] **No bundled font.** The `@font-face` embedding works and is off by default; no OFL font ships
       with the app, so a receipt can still look slightly different on another machine.
-- [ ] **`document.title`.** "SALES RECEIPT" is a literal in `receipt_info.html` — editable, but
-      never became a config key.
+- [x] **`document.title` — DONE** in Stage 8. The heading is `strings.json → totals.document_title`.
 - [x] **Main-window form — DONE, as a prerequisite of §6.3.** The customer form is built from
       `fields.json` now, so receipt-level custom fields can be typed in as well as printed.
 
