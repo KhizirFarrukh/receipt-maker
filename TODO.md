@@ -173,8 +173,17 @@ pricing mistake — so the UI must name which one it is using:
       and the README carries a table contrasting it with the PAdES signature line by line. There
       are tests asserting each of those, because the risk here is a false sense of security rather
       than a rendering bug.
-- [ ] **H7 — audit.** Once the editors are complete, remove every "edit this JSON file"
-      instruction from the README that now has an in-app equivalent.
+- [x] **H7 — audit. DONE.** The README's in-app table now lists everything reachable from the
+      menus and the main window — drafts, scanning, voiding, CSV, per-shipment shipping,
+      instalment plans, the pricing calculator, restore-templates — and `--doctor`. The
+      `appsettings.json` reference gained the eight sections added since it was written
+      (`shipping`, `installments`, `payment`, `signature_image`, `keep_rows_whole`,
+      `low_stock_threshold`, `terms_page.template`, `filename_pattern`), and the filename section
+      leads with the pattern rather than the older field list.
+
+      Hand-editing is still documented rather than discouraged: the dialogs are a front end onto
+      the same files, and saying so is honest. What is gone is the *implication* that a text editor
+      is the only way.
 
 ## 5. From the original plan, still outstanding
 

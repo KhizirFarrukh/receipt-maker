@@ -15,8 +15,9 @@ A Python tkinter desktop app for generating A4 PDF sales receipts.
 - Receipt totals show a Subtotal / Taxes / Discounts / Shipping / Total breakdown; taxes, discounts, and shipping rows (and the Discount/Tax columns) appear only when used.
 - Configurable currency (symbol, placement, decimals, thousand/lakh grouping), date format, receipt types, and document-level tax — inclusive or exclusive. See [Business Settings](#business-settings).
 - Auto-incrementing receipt numbers saved under `invoices/`.
-- Configurable PDF filenames through `filename_config.json`.
-- Configurable business/header details through `appsettings.json`.
+- Configurable PDF filenames from a pattern, e.g. `{invoice_no}-{date}-{name}`.
+- Configurable business details, currency, tax, fields and layout — all editable **inside the app**
+  under **Tools**, or in `appsettings.json` if you prefer a text editor.
 - PDF generation through Playwright/Chromium.
 - Every receipt is digitally signed (PAdES) with your private key, so a forged or edited receipt fails verification against your public certificate. See [Receipt Authenticity](#receipt-authenticity-digital-signatures).
 - The footer links to your Terms of Service, Privacy Policy and Warranty Policy — clickable in the PDF, and configurable under Tools → Settings.
@@ -25,6 +26,14 @@ A Python tkinter desktop app for generating A4 PDF sales receipts.
 - The receipt body is laid out inside the reserved PDF content area, so it does not overlap the header or footer.
 - The whole receipt layout lives in editable templates under `Templates/` — edit the HTML/CSS and the next receipt changes, with no rebuild. See [Templates](#templates).
 - Amounts are computed in decimal (never binary floating point), with each line rounded and the rounded lines summed, so the printed figures add up.
+- A product catalogue with variants, stock, and CSV import/export. Scan a barcode to add a line; scan it again to add one more.
+- **One serial number per item sold**, not one per line — a line of quantity 3 collects three, and selling takes those exact serials off the shelf.
+- **Save a draft** of an unfinished sale. It uses no invoice number, because a draft is not a receipt.
+- **Void a receipt** to cancel it: the stock comes back, the invoice number does not (a number in a customer's hands cannot be un-issued).
+- **Instalment plans**, for the whole order or per line. The cash price stays the receipt total and the plan is shown beside it.
+- **Shipping per shipment**, for an order that leaves from more than one place, with each fee and the combined total shown.
+- **Payment-method charges** — a government levy and a card processor's fee are recorded and reported *separately*, because they are not the same thing.
+- `python cli.py --doctor` checks the environment a receipt needs: browser, output folder, counter, signing key.
 
 ## Requirements
 
@@ -304,7 +313,18 @@ Everything below can be edited **inside the app** — you do not need to open a 
 | **Tools → Fields & Columns…** | The item table's columns, extra receipt fields, and the warranty options (`fields.json`) |
 | **Tools → Signing Keys…** | Create or import the key that signs receipts, and see when its certificate expires |
 | **Tools → Receipt History…** | Every receipt you have generated — search it, and load one back into the form to correct and reissue |
-| **Tools → Products…** | The catalogue you sell from (`products.json`) |
+| **Tools → Products…** | The catalogue you sell from, with CSV import/export and a sell-price calculator (`products.json`) |
+| **Tools → Restore Default Templates…** | Put the shipped receipt layout back, keeping a dated copy of what it replaced |
+
+And on the main window:
+
+| Button | What it does |
+|---|---|
+| **Save Draft** / **Drafts…** | Keep an unfinished receipt and come back to it. Uses no invoice number |
+| **Scan** | Read a barcode to add a line from the catalogue; scan it again to add one more |
+| **Shipping per shipment…** | A separate shipping fee for each group of lines, when an order leaves from more than one place |
+| **Order instalment plan…** | A deposit and a monthly amount for the whole order (or per item, in the item dialog) |
+| **Void…** *(in Receipt History)* | Cancel a receipt and put its stock back. The invoice number is not reused |
 
 Saving validates first, so a value the app would refuse to load is refused *before* anything is
 written, with a message naming the exact setting. Every save keeps a timestamped `.bak`, and if the
@@ -313,6 +333,10 @@ change silently overwritten.
 
 Hand-editing the JSON still works exactly as before — the dialogs are a front end onto the same
 files. The sections below document the files themselves.
+
+`python cli.py --doctor` checks the things around the configuration: a browser to render with, a
+folder to write into, a counter to number from, a key to sign with. It reports everything rather
+than stopping at the first problem, and a warning does not make it exit non-zero.
 
 A few changes (currency labels on the form, the receipt-type dropdown, which item columns exist)
 are applied when the app next starts, because they determine how the main window is laid out.
@@ -344,12 +368,29 @@ Edit `appsettings.json` to change the business details shown in the receipt head
   `"%d %b %Y"` → `31 Jan 2026`, `"%Y-%m-%d"` → `2026-01-31`.
 - `receipt_types` — see [Receipt types](#receipt-types).
 - `invoice` — see [Invoice numbering](#invoice-numbering).
-- `terms_page` — `{"enabled": true}`. Set `false` to drop the Warranty & Returns page; edit its
-  wording in `Templates/terms.html`.
+- `terms_page` — `{"enabled": true, "template": "terms.html"}`. Set `enabled` to `false` to drop
+  the Warranty & Returns page. `template` names which file under `Templates/` it reads, so you can
+  keep your own wording in your own file (`terms.mine.html`, say) and still take updates to the
+  shipped one.
 - `document` — PDF page margins. `margin_top` / `margin_bottom` must reserve room for the page
   header and footer, or Chromium clips them.
 - `render` — `block_external_requests` (default `true`; receipts render offline and cannot fetch
-  from a CDN), `timeout_ms`, `fail_on_missing_image`.
+  from a CDN), `timeout_ms`, `fail_on_missing_image`, and `keep_rows_whole` (default `true`: a
+  product line is moved whole to the next page rather than split across the break, which matters
+  most when a line carries several serial numbers).
+- `shipping` — `{"enabled": true}`. Off removes the shipping box from the form and the row from the
+  receipt, and stops it being added to the total.
+- `installments` — `{"enabled": false}`. Turns on instalment plans. The cash price stays the
+  receipt total and the plan is shown beside it, because the tax rows apply to the goods rather
+  than to financing them. A receipt may carry one whole-order plan **or** one per line, never both.
+- `payment` — `{"methods": []}`. What the customer can pay with and what that costs: each method
+  has a `label`, a `kind` (`"tax"` for a government levy you remit, `"fee"` for a processor's
+  service charge — they are reported separately and must not be swapped), and a `percent` and/or
+  `fixed` amount.
+- `inventory` — `track_stock`, and `low_stock_threshold` (0 warns when something runs out; 3 warns
+  while there is still time to reorder).
+- `signature_image` — a scanned handwritten signature at the foot of the receipt. **Decorative
+  only** — see [A scanned signature is not a digital signature](#a-scanned-signature-is-not-a-digital-signature).
 - `links` — `terms_url`, `privacy_url` and `warranty_url`, linked from the receipt footer.
   Set them under **Tools → Settings → Links**. Only `http://`, `https://` and `mailto:` are
   accepted, since the link is embedded in a PDF that goes to customers.
@@ -589,7 +630,24 @@ warning, so a receipt is never issued without its logo.
 
 ## PDF Filename Config
 
-Edit `filename_config.json` to choose which fields are added to generated PDF names.
+Set **`invoice.filename_pattern`** in `appsettings.json` (or under **Tools → Settings → Numbering**)
+to name receipts however you like:
+
+```json
+"filename_pattern": "{invoice_no}-{date}-{name}"
+```
+
+Available placeholders: `{invoice_no}`, `{date}`, `{name}`, `{email}`, `{phone}`, `{receipt_type}`.
+A blank value collapses the separator beside it rather than leaving a gap.
+
+**`{invoice_no}` is required.** It is the only part of a receipt guaranteed unique, so without it
+two receipts on the same day for the same customer would overwrite each other. The app refuses a
+pattern that omits it, and names the placeholders you can use if you mistype one.
+
+Leave the pattern empty and naming falls back to `filename_config.json`, below, which is what every
+existing install already does — so filenames do not change unless you ask them to.
+
+### filename_config.json (the older mechanism)
 
 The invoice/receipt number is always first. Optional fields are added after it with hyphens between each part.
 
