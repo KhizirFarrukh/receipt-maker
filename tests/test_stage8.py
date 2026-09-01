@@ -186,6 +186,92 @@ class TheDuplicateNotice(TheDocumentTitle):
         self.assertEqual(source.count("receipt_history.latest_for"), 1)
 
 
+class TheTermsPageIsSelectable(Stage8TestCase):
+    """A shop's own policy wording lives in its own file.
+
+    The shipped `terms.html` used to carry one particular business's returns
+    policy, phone number and support email, so every clone of this repo printed
+    them. Making the *file* configurable fixes that without anyone having to
+    give up their wording: keep it under another name and point at it.
+    """
+
+    def write_terms(self, name, marker):
+        path = os.path.join(self.dir, "Templates", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(f'<div class="policy-page">{marker}</div>\n')
+
+    def render(self):
+        receipt_render.clear_template_cache()
+        return receipt_render.build_html(
+            "INV-W1", "1 Jan 2026", "Ada", "", "",
+            [{"sku": "A", "desc": "Thing", "serial": "", "qty": 1, "price": "10",
+              "discount": "0", "tax": "0", "warranty": ""}], "Online", 0)
+
+    def test_the_default_is_terms_html(self):
+        self.assertEqual(
+            config.default_app_settings()["terms_page"]["template"], "terms.html")
+
+    def test_the_shipped_page_carries_nobody_business_details(self):
+        """The whole point: a clone must not print someone else's policy."""
+        with open(os.path.join(PROJ, "Templates", "terms.html"),
+                  encoding="utf-8") as handle:
+            shipped = handle.read()
+        for leak in ("Chawla Tech", "chawlatech", "339 282 5523", "@chawlatech"):
+            self.assertNotIn(leak, shipped,
+                             f"the shipped terms page still names {leak!r}")
+
+    def test_a_named_file_is_used_instead(self):
+        config.install_default_templates()
+        self.write_terms("terms.mine.html", "MY OWN POLICY")
+        config.update_app_settings({"terms_page": {"template": "terms.mine.html"}})
+        self.assertIn("MY OWN POLICY", self.render())
+
+    def test_switching_back_restores_the_shipped_one(self):
+        config.install_default_templates()
+        self.write_terms("terms.mine.html", "MY OWN POLICY")
+        config.update_app_settings({"terms_page": {"template": "terms.mine.html"}})
+        self.assertIn("MY OWN POLICY", self.render())
+        config.update_app_settings({"terms_page": {"template": "terms.html"}})
+        self.assertNotIn("MY OWN POLICY", self.render())
+
+    def test_a_missing_file_is_reported_by_name(self):
+        config.update_app_settings({"terms_page": {"template": "terms.gone.html"}})
+        from template_engine import TemplateError
+        with self.assertRaises(TemplateError) as ctx:
+            self.render()
+        self.assertIn("terms.gone.html", str(ctx.exception))
+
+
+class TheTermsTemplateIsValidated(unittest.TestCase):
+    def settings(self, template):
+        settings = config.default_app_settings()
+        settings["terms_page"]["template"] = template
+        return settings
+
+    def test_a_filename_passes(self):
+        config.validate(self.settings("terms.mine.html"), "appsettings.json")
+
+    def test_a_path_is_refused(self):
+        """The value is joined onto a directory and read from disk."""
+        # Raw strings: "..\terms.html" is "..<TAB>erms.html", which contains no
+        # backslash at all and would quietly test nothing.
+        for bad in ("../secrets.html", "sub/terms.html", r"..\terms.html",
+                    r"C:\Windows\win.ini", "/etc/passwd"):
+            with self.subTest(template=bad):
+                with self.assertRaises(config.ConfigError) as ctx:
+                    config.validate(self.settings(bad), "appsettings.json")
+                self.assertEqual(ctx.exception.key, "terms_page.template")
+
+    def test_it_must_be_html(self):
+        with self.assertRaises(config.ConfigError):
+            config.validate(self.settings("terms.txt"), "appsettings.json")
+
+    def test_it_cannot_be_empty(self):
+        with self.assertRaises(config.ConfigError):
+            config.validate(self.settings("   "), "appsettings.json")
+
+
 class PinnedDependencies(unittest.TestCase):
     """A different Chromium lays out a PDF differently."""
 

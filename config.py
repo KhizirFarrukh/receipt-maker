@@ -244,7 +244,12 @@ DEFAULT_APP_SETTINGS = {
     ],
     # The Warranty & Returns page appended after the receipt. Edit its wording in
     # Templates/terms.html; set enabled to false to drop the page entirely.
+    # Which file the terms page is read from. Named rather than fixed so a shop
+    # can keep its own wording in its own file and still take template updates
+    # to everything else -- and so the shipped terms.html can stay generic
+    # instead of carrying one particular business's policy to every clone.
     "terms_page": {
+        "template": "terms.html",
         "enabled": True,
     },
     # Stock counting. Off by default: a catalogue whose stock has never been
@@ -809,6 +814,22 @@ def validate(settings, filename=None):
             filename, "receipt_types")
 
     terms_page = settings.get("terms_page")
+    if isinstance(terms_page, dict):
+        template = terms_page.get("template", "terms.html")
+        if not isinstance(template, str) or not template.strip():
+            raise ConfigError("must be a template filename", filename,
+                              "terms_page.template")
+        # A filename, not a path. This value is joined onto a directory and
+        # read, so "../../etc/passwd" would be read too -- and there is no
+        # reason to keep a terms page anywhere but Templates.
+        if (os.path.basename(template) != template
+                or template in (".", "..") or "\\" in template):
+            raise ConfigError(
+                f"must be a filename inside Templates, not a path (got "
+                f"{template!r})", filename, "terms_page.template")
+        if not template.lower().endswith(".html"):
+            raise ConfigError("must be an .html file", filename,
+                              "terms_page.template")
     if not isinstance(terms_page, dict):
         raise ConfigError("must be an object", filename, "terms_page")
     if not isinstance(terms_page.get("enabled", True), bool):
@@ -1451,6 +1472,15 @@ def save_state(state, path=None):
         atomic_write_json(path, state, keep_backup=False)
     except OSError:
         pass
+
+
+def terms_template_name(settings=None):
+    """Which template file the terms page reads. Always a bare filename."""
+    settings = settings if settings is not None else load_app_settings()
+    name = str(settings.get("terms_page", {}).get("template", "") or "").strip()
+    if not name or os.path.basename(name) != name:
+        return "terms.html"
+    return name
 
 
 def strings_file():

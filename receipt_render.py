@@ -547,8 +547,14 @@ def load_templates(force=False):
 
     install_default_templates()
     compiled = {}
+    # The terms page is the one block whose *file* is configurable: a shop
+    # keeps its own policy wording in its own file, and the shipped terms.html
+    # stays generic rather than carrying one business's policy to every install.
+    # It is still linted and cached under the block name "terms.html".
+    terms_file = config.terms_template_name()
     for name, allowed in BLOCK_CONTEXTS.items():
-        path = branding_template_path(name)
+        path = branding_template_path(
+            terms_file if name == "terms.html" else name)
         if not os.path.isfile(path):
             raise TemplateError(
                 f"template is missing. Expected it at {path}. Reinstall the app "

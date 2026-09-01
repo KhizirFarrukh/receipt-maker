@@ -195,9 +195,15 @@ pricing mistake — so the UI must name which one it is using:
       - **Pinned dependencies.** `playwright`, `pyhanko` and `cryptography` are pinned exactly.
         The Playwright version *is* the Chromium version, and a different Chromium lays out a PDF
         differently, so a loose range means one receipt can look different on two machines.
-- [ ] **Neutral defaults.** `Templates/terms.html` still carries Chawla Tech wording. It is an
-      ordinary editable template now, so this is a content edit — but the shipped default should be
-      generic. (`footer.html` was neutralised when the policy links landed.)
+- [x] **Neutral defaults — DONE, without changing anybody's receipts.** The terms page's *file*
+      is now configurable (`terms_page.template`), so the shipped `terms.html` could be made
+      generic while the existing wording moved to `terms.chawlatech.html` with `appsettings.json`
+      pointing at it. Receipts are byte-identical; a fresh clone no longer prints another
+      business's policy, phone number and support email.
+      - [ ] *One step left, and it is a repo decision rather than code:* `appsettings.json`,
+            `fields.json` and `filename_config.json` are **tracked**, so a clone still inherits
+            this shop's settings — including that pointer. If this repo is ever published, untrack
+            them and ship `.example` copies. If it stays private, nothing needs doing.
 - [ ] **No bundled font.** The `@font-face` embedding works and is off by default; no OFL font ships
       with the app, so a receipt can still look slightly different on another machine.
 - [ ] **`document.title`.** "SALES RECEIPT" is a literal in `receipt_info.html` — editable, but
