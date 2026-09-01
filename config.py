@@ -254,6 +254,20 @@ DEFAULT_APP_SETTINGS = {
     "payment": {
         "methods": [],
     },
+    # A scanned handwritten signature printed at the foot of the receipt.
+    #
+    # This is DECORATIVE. It is a picture, it proves nothing, and anyone with
+    # the PDF can copy it. The cryptographic signature is the "signing" section
+    # above -- that one is a PAdES signature over the document bytes and is
+    # what makes a forged receipt detectable. Naming this key `signature_image`
+    # rather than `signature` is deliberate: the two must never be confused in
+    # a config file, a settings dialog, or a conversation.
+    "signature_image": {
+        "enabled": False,
+        "path": "",
+        "label": "Authorised signature",
+        "width_px": 180,
+    },
     # Shipping. A shop that never charges it should not have the box on the
     # form or the row on the receipt -- it was a label with no switch until the
     # section 6.6 audit went looking.
@@ -796,6 +810,25 @@ def validate(settings, filename=None):
             "must be a positive whole number of milliseconds", filename, "render.timeout_ms")
     if not isinstance(render.get("keep_rows_whole", True), bool):
         raise ConfigError("must be true or false", filename, "render.keep_rows_whole")
+
+    signature_image = settings.get("signature_image")
+    if not isinstance(signature_image, dict):
+        raise ConfigError("must be an object", filename, "signature_image")
+    if not isinstance(signature_image.get("enabled", False), bool):
+        raise ConfigError("must be true or false", filename,
+                          "signature_image.enabled")
+    for key in ("path", "label"):
+        if not isinstance(signature_image.get(key, ""), str):
+            raise ConfigError("must be text", filename,
+                              f"signature_image.{key}")
+    width = signature_image.get("width_px", 180)
+    if isinstance(width, bool) or not isinstance(width, int) or width <= 0:
+        raise ConfigError("must be a positive whole number of pixels", filename,
+                          "signature_image.width_px")
+    if signature_image.get("enabled") and not str(signature_image.get("path", "")).strip():
+        raise ConfigError(
+            "the signature image is switched on but no file is set", filename,
+            "signature_image.path")
 
     shipping = settings.get("shipping")
     if not isinstance(shipping, dict):

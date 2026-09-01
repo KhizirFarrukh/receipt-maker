@@ -158,9 +158,13 @@ pricing mistake — so the UI must name which one it is using:
       number showing in the box is stored as `suggested_inv_no` rather than `inv_no`, so nothing
       downstream can mistake a draft for something that has been numbered, and it is offered again
       on restore. Stored in `drafts.json` (gitignored: it holds customer details).
-- [ ] **H6 (remainder) — image signature.** A scanned signature image on the receipt. **It is
-      decorative, not cryptographic** — the README must keep saying so, or it reads as equivalent
-      to the real PAdES signature.
+- [x] **H6 — image signature. DONE.** A scanned signature at the foot of the receipt, under
+      **Settings → Advanced**. It is **decorative, not cryptographic**, and the whole design is
+      arranged around not letting anyone believe otherwise: the config key is `signature_image`
+      rather than `signature`, the settings help opens with "DECORATIVE ONLY … proves nothing",
+      and the README carries a table contrasting it with the PAdES signature line by line. There
+      are tests asserting each of those, because the risk here is a false sense of security rather
+      than a rendering bug.
 - [ ] **H7 — audit.** Once the editors are complete, remove every "edit this JSON file"
       instruction from the README that now has an in-app equivalent.
 

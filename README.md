@@ -179,6 +179,26 @@ Once the key exists, every receipt you generate is signed automatically. The sig
 embedded in the PDF itself, so a reader can check it without the receipt having to announce it —
 which is why the footer carries no "digitally signed" notice.
 
+### A scanned signature is not a digital signature
+
+There is a separate setting, **Settings → Advanced → Print a scanned signature**, that puts a
+picture of a handwritten signature at the foot of the receipt. It is worth being blunt about what
+that is and is not:
+
+|  | Scanned signature image | Digital signature |
+|---|---|---|
+| What it is | A picture | A cryptographic seal over the PDF bytes |
+| Proves the receipt is unaltered | **No** | Yes |
+| Proves it came from you | **No** | Yes, against your certificate |
+| Can be copied by anyone with the PDF | **Yes** | No |
+| Where | `signature_image` | `signing` |
+
+The image is decoration — a customary flourish on an invoice. Anyone who receives one receipt can
+lift the picture and paste it onto anything. The signature that makes a forged receipt *detectable*
+is the digital one above, and nothing about adding the picture changes that either way. The two
+settings are named `signature_image` and `signing` precisely so they cannot be confused in a config
+file.
+
 ### Verifying receipts
 
 - **In the app:** `Tools → Verify Receipt…`, pick a PDF. You get one of three results:

@@ -101,6 +101,26 @@
        its line breaks and wraps rather than running off the box. Unlike a
        product line it *may* break across pages: it is prose, and forcing a long
        note onto one page would push it past the end of the paper. */
+    /* A scanned handwritten signature. Decorative only -- the cryptographic
+       signature is the PAdES one over the document bytes, which is not
+       something a stylesheet can show. */
+    .signature-block {
+        margin-top: 26px;
+        text-align: right;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    .signature-image {
+        max-width: 260px;
+    }
+    .signature-label {
+        border-top: 1px solid #94a3b8;
+        display: inline-block;
+        padding-top: 3px;
+        margin-top: 2px;
+        font-size: 8pt;
+        color: #64748b;
+    }
     .receipt-field.field-lines {
         white-space: pre-line;
         word-break: break-word;

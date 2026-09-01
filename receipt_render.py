@@ -512,7 +512,7 @@ NO_WARRANTY_LABEL = "No Warranty"
 #: checks templates against this; the renderer builds contexts from it.
 BLOCK_CONTEXTS = {
     "base.html": {"resource_base", "styles", "font_faces", "receipt_info",
-                  "items_table", "totals", "terms"},
+                  "items_table", "totals", "terms", "signature"},
     "styles.css": {"keep_rows_whole"},
     "receipt_info.html": {"type_badge", "invoice_no", "date", "customer_name",
                           "customer_phone", "customer_email",
@@ -522,6 +522,7 @@ BLOCK_CONTEXTS = {
     "item_header_cell.html": {"label", "css_class"},
     "item_row_cell.html": {"value", "css_class", "note"},
     "totals.html": {"totals_rows", "total"},
+    "signature.html": {"image_src", "label", "width_px"},
     "totals_row.html": {"label", "amount"},
     "terms.html": set(),
 }
@@ -601,13 +602,15 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
         show_installments=settings.get("installments", {}).get("enabled", False),
         payment_config=settings,
         show_shipping=settings.get("shipping", {}).get("enabled", True),
+        signature_image=settings.get("signature_image"),
     )
 
 
 def render_receipt(data, templates, resource_base="", font_faces="", strings=None,
                    currency=None, terms=True, tax_config=None, fields=None,
                    keep_rows_whole=True, show_installments=False,
-                   payment_config=None, show_shipping=True):
+                   payment_config=None, show_shipping=True,
+                   signature_image=None):
     """Pure render: (data, templates, strings, currency) -> html.
 
     No clock, no IO, no globals. Everything non-deterministic (the resource base
@@ -805,7 +808,28 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
         "total": format_amount(total, currency),
     })
 
+    # A scanned signature, if one is configured. Decorative -- see config.py.
+    # The image is inlined as base64 by the same pass that handles the logo, so
+    # a receipt still renders with no network and no missing-file box.
+    signature = ""
+    if signature_image and signature_image.get("enabled"):
+        source = str(signature_image.get("path", "") or "").strip()
+        if source:
+            signature = _block(templates, "signature.html", {
+                "image_src": source,
+                "label": str(signature_image.get("label", "") or ""),
+                "width_px": str(signature_image.get("width_px", 180)),
+            })
+            # Inline it, as the header and footer do with the logo. The body
+            # would resolve a relative src through `<base href>` and render
+            # correctly today, but a receipt that carries its own images keeps
+            # rendering if the HTML is ever written somewhere else -- and a
+            # missing signature is the kind of thing nobody notices until a
+            # customer asks why the receipt looks unsigned.
+            signature = inline_local_images(signature)
+
     return _block(templates, "base.html", {
+        "signature": signature,
         "resource_base": resource_base,
         "styles": _block(templates, "styles.css", {
             "keep_rows_whole": keep_rows_whole,

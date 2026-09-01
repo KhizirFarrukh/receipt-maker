@@ -112,6 +112,17 @@ SETTINGS_SECTIONS = [
         ("render.fail_on_missing_image", "Treat a missing image as an error", "bool",
          {"help": "On: refuse to issue a receipt whose logo is missing."}),
         ("render.timeout_ms", "Render timeout (ms)", "int", {}),
+        ("signature_image.enabled", "Print a scanned signature", "bool",
+         {"help": "DECORATIVE ONLY. This is a picture at the foot of the "
+                  "receipt; it proves nothing and anyone with the PDF can copy "
+                  "it. The signature that makes a forged receipt detectable is "
+                  "the digital one under Signing, which signs the document "
+                  "bytes."}),
+        ("signature_image.path", "Signature image", "path",
+         {"filetypes": [("Images", "*.png *.jpg *.jpeg *.gif"), ("All files", "*.*")],
+          "help": "A PNG with a transparent background works best."}),
+        ("signature_image.label", "Caption under it", "text", {}),
+        ("signature_image.width_px", "Width on the page (px)", "int", {}),
         ("shipping.enabled", "Charge shipping", "bool",
          {"help": "Off removes the shipping box from the form and the "
                   "shipping row from the receipt, and stops it being "
