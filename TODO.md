@@ -166,9 +166,13 @@ pricing mistake — so the UI must name which one it is using:
 
 ## 5. From the original plan, still outstanding
 
-- [ ] **Stage 7 — diagnostics (`--doctor`).** The archive half is now covered by receipt history;
-      what remains is the environment check: missing browser, unreadable key, expiring certificate,
-      read-only output folder.
+- [x] **Stage 7 — diagnostics (`--doctor`). DONE.** `python cli.py --doctor` checks the things
+      `--check` does not: a browser to render with, a folder to write into, a counter to number
+      from, a key to sign with, and the data files. Every check runs — a doctor that stops at the
+      first problem makes you run it four times — and a **warning is not a failure**: a missing
+      logo or an expiring certificate reports and still exits 0, so the command stays usable in a
+      build script. `EXIT_ENVIRONMENT` (6) is its own code so a script can tell it from a config or
+      render failure.
 - [ ] **Stage 8 — polish.** Configurable filename patterns (and the validation that a pattern must
       contain the invoice-number token), reprint from archive with a DUPLICATE badge, "restore
       default templates", pinned Playwright version.

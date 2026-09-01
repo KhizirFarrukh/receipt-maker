@@ -319,5 +319,81 @@ class TreeviewEatsLeadingZeros(unittest.TestCase):
         self.assertEqual(self.app.item_at(row)["price"], "10.00")
 
 
+class RetiredCertificatesFollowTheirKey(unittest.TestCase):
+    """`SIGNING_DIR` was computed at import time and never saw set_app_dir().
+
+    Found by running --doctor and noticing a signing certificate in the real
+    project folder: the suite had quietly written 65 retired certificates there,
+    one per run since the key-rotation feature landed. The same bug meant
+    `cli.py --config-dir` archived into the wrong folder.
+
+    receipt_signing deliberately does not import config, so the archive folder
+    is derived from the certificate being retired instead -- which is also just
+    more correct, since a retired certificate belongs beside its replacement.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="rm-regress-certs-")
+        self.other = tempfile.mkdtemp(prefix="rm-regress-certs2-")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+        shutil.rmtree(self.other, ignore_errors=True)
+
+    def make_key(self, folder):
+        import receipt_signing
+        return receipt_signing.generate_key_pair(
+            os.path.join(folder, "private_key.pem"),
+            os.path.join(folder, "certificate.pem"),
+            common_name="Test", org_name="Test")
+
+    def test_the_archive_sits_beside_the_certificate(self):
+        import receipt_signing
+        cert = os.path.join(self.dir, "certificate.pem")
+        self.assertEqual(receipt_signing.known_certs_dir(cert),
+                         os.path.join(self.dir, "previous_certificates"))
+
+    def test_rotating_a_key_archives_next_to_that_key(self):
+        import receipt_signing
+        _, cert = self.make_key(self.dir)
+        receipt_signing.remember_current_certificate(cert)
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.dir, "previous_certificates")))
+
+    def test_it_does_not_write_into_the_module_directory(self):
+        """The actual leak: certificates landing in the project folder."""
+        import receipt_signing
+        module_archive = os.path.join(
+            os.path.dirname(os.path.abspath(receipt_signing.__file__)),
+            "signing", "previous_certificates")
+        before = (len(os.listdir(module_archive))
+                  if os.path.isdir(module_archive) else 0)
+
+        _, cert = self.make_key(self.dir)
+        receipt_signing.remember_current_certificate(cert)
+
+        after = (len(os.listdir(module_archive))
+                 if os.path.isdir(module_archive) else 0)
+        self.assertEqual(before, after,
+                         "archiving wrote into the project's own signing folder")
+
+    def test_two_key_locations_keep_separate_archives(self):
+        import receipt_signing
+        _, first = self.make_key(self.dir)
+        _, second = self.make_key(self.other)
+        receipt_signing.remember_current_certificate(first)
+
+        self.assertEqual(receipt_signing.known_certificate_paths(second),
+                         [second], "the other key's archive must not leak in")
+
+    def test_known_paths_lists_the_current_certificate_first(self):
+        import receipt_signing
+        _, cert = self.make_key(self.dir)
+        receipt_signing.remember_current_certificate(cert)
+        paths = receipt_signing.known_certificate_paths(cert)
+        self.assertEqual(paths[0], cert)
+        self.assertEqual(len(paths), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

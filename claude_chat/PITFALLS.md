@@ -101,6 +101,19 @@ A test patched `build_page_header_template` to raise, expecting the caller's `ex
 but that call happens *before* the `try` block, so the exception escaped. Check where the seam
 actually sits relative to the guard you want to exercise.
 
+### A module-level path never sees `set_app_dir()`
+
+`receipt_signing.SIGNING_DIR` was computed at import time, so `config.set_app_dir()` could not
+re-root it. Two consequences, neither obvious: `cli.py --config-dir` archived retired certificates
+into the wrong folder, and the **test suite wrote 65 certificates into the real project directory**,
+one per run, for a week. It was only noticed because `--doctor` reported a signing key that should
+not have existed.
+
+`config.py` says this outright — "other modules must read these through the `config` module rather
+than importing the names, or they keep a stale copy from import time" — and `receipt_signing` was
+not even doing that: it computed its own `APP_DIR`. If a path is a module-level constant, check
+what re-roots it.
+
 ## The golden gate
 
 ### The fixture caches templates

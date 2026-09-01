@@ -154,10 +154,36 @@ def generate_key_pair(key_path=DEFAULT_KEY_PATH, cert_path=DEFAULT_CERT_PATH,
 
 
 # ------------------- key import -------------------
-#: Certificates retired by a key rotation. Receipts signed with them must keep
-#: verifying: the receipt was genuine when it was issued, and rotating a key
-#: cannot retroactively make a customer's copy look forged.
-KNOWN_CERTS_DIR = os.path.join(SIGNING_DIR, "previous_certificates")
+#: Name of the folder holding certificates retired by a key rotation. Receipts
+#: signed with them must keep verifying: the receipt was genuine when it was
+#: issued, and rotating a key cannot retroactively make a customer's copy look
+#: forged.
+KNOWN_CERTS_DIRNAME = "previous_certificates"
+
+#: The archive for the *default* certificate. Kept for callers that ask for it
+#: by name, but nothing here uses it -- see known_certs_dir() for why.
+KNOWN_CERTS_DIR = os.path.join(SIGNING_DIR, KNOWN_CERTS_DIRNAME)
+
+
+def known_certs_dir(cert_path):
+    """Where `cert_path`'s retired certificates live: a sibling folder.
+
+    Derived from the certificate rather than from a module-level constant, and
+    that is the fix for a real bug rather than a tidy-up. `SIGNING_DIR` is
+    computed at import time from this module's own idea of APP_DIR, so it never
+    saw `config.set_app_dir()` -- which meant `cli.py --config-dir` archived
+    into the wrong folder, and the test suite quietly wrote 65 certificates
+    into the developer's real project directory.
+
+    Deriving it from the certificate also happens to be more correct: a
+    retired certificate belongs beside the one that replaced it, wherever that
+    is, including when someone points the config at a key outside APP_DIR.
+
+    This module deliberately does not import `config` (ARCHITECTURE: "no config
+    coupling"), so reading APP_DIR at call time was not an option here.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(cert_path)),
+                        KNOWN_CERTS_DIRNAME)
 
 MIN_RSA_BITS = 2048
 
@@ -391,9 +417,10 @@ def remember_current_certificate(cert_path=DEFAULT_CERT_PATH):
 
         with open(cert_path, "rb") as f:
             data = f.read()
-        os.makedirs(KNOWN_CERTS_DIR, exist_ok=True)
+        archive = known_certs_dir(cert_path)
+        os.makedirs(archive, exist_ok=True)
         target = os.path.join(
-            KNOWN_CERTS_DIR, f"certificate-{hashlib.sha256(data).hexdigest()[:16]}.pem")
+            archive, f"certificate-{hashlib.sha256(data).hexdigest()[:16]}.pem")
         if not os.path.exists(target):
             with open(target, "wb") as f:
                 f.write(data)
@@ -405,10 +432,11 @@ def remember_current_certificate(cert_path=DEFAULT_CERT_PATH):
 def known_certificate_paths(cert_path=DEFAULT_CERT_PATH):
     """Current certificate first, then any retired ones."""
     paths = [cert_path] if os.path.isfile(cert_path) else []
+    archive = known_certs_dir(cert_path)
     try:
-        for name in sorted(os.listdir(KNOWN_CERTS_DIR)):
+        for name in sorted(os.listdir(archive)):
             if name.lower().endswith((".pem", ".crt", ".cer")):
-                paths.append(os.path.join(KNOWN_CERTS_DIR, name))
+                paths.append(os.path.join(archive, name))
     except OSError:
         pass
     return paths
