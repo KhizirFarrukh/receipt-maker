@@ -144,22 +144,41 @@ def avoid_reserved_name(stem):
     return f"{stem}_" if stem.upper() in _WINDOWS_DEVICE_NAMES else stem
 
 
-def build_pdf_filename(inv_no, date_str, cust, email, phone):
-    filename_values = {
+def filename_pattern():
+    """The configured pattern, or one built from the legacy field list.
+
+    Two mechanisms existed for naming a receipt and only one of them could be
+    expressive, so the pattern is now the mechanism and the old
+    `filename_config.json` field list is read as a way of *writing* one. That
+    keeps every existing install producing byte-identical filenames while
+    giving anyone who wants "{invoice_no}_{date}" a way to say so.
+    """
+    settings = load_app_settings()
+    configured = str(settings.get("invoice", {}).get("filename_pattern", "") or "").strip()
+    if configured:
+        return configured
+    parts = ["{invoice_no}"] + [f"{{{field}}}" for field in load_filename_fields()]
+    return "-".join(parts)
+
+
+def build_pdf_filename(inv_no, date_str, cust, email, phone, receipt_type=""):
+    values = {
+        "invoice_no": inv_no,
         "date": date_str,
         "name": cust,
         "email": email,
         "phone": phone,
+        "receipt_type": receipt_type,
     }
-    filename_parts = [sanitize_filename_part(inv_no)]
 
-    for field in load_filename_fields():
-        value = filename_values.get(field, "")
-        clean_value = sanitize_filename_part(value)
-        if clean_value:
-            filename_parts.append(clean_value)
+    def replace(match):
+        return sanitize_filename_part(values.get(match.group(1), ""))
 
-    return avoid_reserved_name("-".join(filename_parts)) + ".pdf"
+    name = re.sub(r"\{([^{}]*)\}", replace, filename_pattern())
+    # A blank value leaves a separator with nothing beside it: "INV-1--Ada" or
+    # a trailing dash. Collapse them rather than printing the gap.
+    name = re.sub(r"[-_ .]{2,}", lambda m: m.group(0)[0], name).strip("-_ .")
+    return avoid_reserved_name(name or sanitize_filename_part(inv_no)) + ".pdf"
 
 
 def next_available_pdf_path(base_filename):
@@ -250,11 +269,18 @@ def generate(data, out_path, progress_cb=None):
         if progress_cb:
             progress_cb(step, label)
 
+    # Read history before anything is written. It answers two questions with
+    # one lookup: has this number been issued before (so the PDF is a duplicate
+    # and must say so), and what did it contain last time (so stock adjusts by
+    # the difference rather than deducting the sale twice).
+    previous = receipt_history.latest_for(data.get("inv_no", ""))
+
     report(1, "Building receipt...")
     html = receipt_render.build_html(
         data["inv_no"], data["date_str"], data["cust"], data["phone"],
         data["email"], data["items"], data.get("receipt_type", "Online"),
         data.get("shipping", 0.0),
+        is_duplicate=previous is not None,
     )
 
     # Render and sign a temp file in the same directory, then move it into place
@@ -281,9 +307,8 @@ def generate(data, out_path, progress_cb=None):
     # allowed to fail the receipt: the signed PDF is the legal artifact.
     #
     # Stock first, and deliberately: it needs the *previous* version of this
-    # receipt to work out what changed, which means reading history before the
-    # new record is appended to it.
-    previous = receipt_history.latest_for(data.get("inv_no", ""))
+    # receipt to work out what changed. `previous` was read at the top, before
+    # anything was written and before the new record is appended.
     product_catalogue.record_sale(
         data.get("inv_no", ""), data.get("items"),
         previous.get("items") if previous else None)

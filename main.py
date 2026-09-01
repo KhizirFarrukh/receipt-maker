@@ -1790,7 +1790,8 @@ class ReceiptApp:
         # Resolve the output path (and any collision) on the main thread, before
         # the worker starts, because the collision prompt is a UI decision.
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        base_filename = receipt_service.build_pdf_filename(inv_no, date_str, cust, email, phone)
+        base_filename = receipt_service.build_pdf_filename(
+            inv_no, date_str, cust, email, phone, receipt_type)
         pdf_path = os.path.join(OUTPUT_DIR, base_filename)
         if os.path.exists(pdf_path):
             answer = messagebox.askyesnocancel(
@@ -1945,11 +1946,73 @@ class ReceiptApp:
         tools.add_command(label="Settings...", command=self.open_settings_dialog)
         tools.add_command(label="Fields && Columns...", command=self.open_fields_dialog)
         tools.add_command(label="Signing Keys...", command=self.open_signing_keys_dialog)
+        tools.add_command(label="Restore Default Templates...",
+                          command=self.restore_default_templates)
         tools.add_separator()
         tools.add_command(label="Verify Receipt...", command=self.verify_receipt_dialog)
         tools.add_command(label="Sign Existing PDF(s)...", command=self.sign_existing_pdfs_dialog)
         menubar.add_cascade(label="Tools", menu=tools)
         root.config(menu=menubar)
+
+    def restore_default_templates(self):
+        """Put the shipped templates back, keeping a copy of what was there.
+
+        The way out of an edit that broke rendering. Templates are ordinary
+        HTML and CSS, and the app refuses to start against a broken one -- which
+        is correct, and leaves someone with no way back if they cannot spot the
+        typo. Every replaced file is copied to Templates/.replaced-<stamp>/
+        rather than deleted: this is the recovery tool, so it cannot itself be
+        the thing that loses work.
+        """
+        import datetime
+        import shutil
+        import receipt_render
+
+        if not messagebox.askyesno(
+                "Restore default templates?",
+                "Replace every template with the version the app ships with.\n\n"
+                "Your current templates are copied into a dated folder inside "
+                "Templates first, so nothing is lost -- but any styling you "
+                "changed will stop applying until you copy it back.",
+                parent=self.root):
+            return
+
+        templates_dir = config.TEMPLATES_DIR
+        backup = os.path.join(
+            templates_dir,
+            ".replaced-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        try:
+            saved = 0
+            if os.path.isdir(templates_dir):
+                os.makedirs(backup, exist_ok=True)
+                for name in sorted(os.listdir(templates_dir)):
+                    source = os.path.join(templates_dir, name)
+                    if os.path.isfile(source) and not name.startswith("."):
+                        shutil.copy2(source, os.path.join(backup, name))
+                        saved += 1
+
+            restored = config.install_default_templates(force=True)
+            receipt_render.clear_template_cache()
+        except Exception as exc:                 # noqa: BLE001 - reported
+            show_error(self.root, "Could not restore the templates", str(exc),
+                       traceback.format_exc())
+            return
+
+        if not restored:
+            # Running from a source checkout: the bundled and installed
+            # directories are the same folder, so there is nothing to copy from.
+            messagebox.showinfo(
+                "Nothing to restore",
+                "This build reads its templates straight from the source "
+                "folder, so there is no separate bundled copy to restore from.",
+                parent=self.root)
+            return
+
+        messagebox.showinfo(
+            "Templates restored",
+            f"{len(restored)} template(s) restored.\n\n"
+            f"The previous {saved} file(s) were copied to:\n{backup}",
+            parent=self.root)
 
     def open_settings_dialog(self):
         """Edit appsettings.json in the app rather than in a text editor."""

@@ -1,7 +1,23 @@
-playwright>=1.44.0
-pyhanko>=0.25.0
-cryptography>=42.0.0
+# Pinned exactly, not loosely, because this is a packaged desktop app rather
+# than a library and the receipts it produces are signed documents that go to
+# customers. Two reasons the exact versions matter:
+#
+#   * The Playwright version *is* the Chromium version. `playwright install`
+#     fetches the browser build that release pins, and a different Chromium
+#     lays out a PDF slightly differently -- so a loose range means the same
+#     receipt can look different on two machines, or after a reinstall.
+#   * pyhanko and cryptography produce the signature. A signature is either
+#     verifiable or it is not, and finding out that a dependency bump changed
+#     something is better done deliberately than on a customer's receipt.
+#
+# To move to a newer version: bump it here, run the full suite, run
+# `python main.py --smoke-test` for a real PDF, and check the golden gate. Then
+# commit the bump on its own so it can be reverted on its own.
+playwright==1.62.0
+pyhanko==0.36.2
+cryptography==50.0.0
+
 # Windows ships no IANA time-zone database, so zoneinfo (used via pyhanko's
-# tzlocal) has nothing to read without this. Currently arrives as a transitive
-# dependency; pinned explicitly so a dependency change cannot silently drop it.
+# tzlocal) has nothing to read without this. Arrives as a transitive dependency;
+# pinned explicitly so a dependency change cannot silently drop it.
 tzdata>=2024.1

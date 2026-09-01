@@ -203,15 +203,25 @@ class TemplatesDriveOutput(TempAppDir):
         self.assertIn("stage2-marker", after)
 
     def test_editing_a_block_changes_output(self):
+        """Edit a literal in a block; see it on the receipt.
+
+        This used to edit "SALES RECEIPT", which is now `{{document_title}}`
+        and configurable -- a better answer to the same need, but it left this
+        test editing a string that is no longer in the file. The point is that
+        a template drives the output, so any literal in it will do.
+        """
         config.install_default_templates()
         path = os.path.join(self.dir, "Templates", "receipt_info.html")
         with open(path, "r", encoding="utf-8") as f:
             source = f.read()
+        self.assertIn("Receipt No:", source, "the literal this test edits is gone")
         with open(path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(source.replace("SALES RECEIPT", "TAX INVOICE"))
+            f.write(source.replace("Receipt No:", "Reference:"))
         receipt_render.clear_template_cache()
 
-        self.assertIn("TAX INVOICE", self._render())
+        rendered = self._render()
+        self.assertIn("Reference:", rendered)
+        self.assertNotIn("Receipt No:", rendered)
 
     def test_first_run_records_hashes_at_copy_time(self):
         copied = config.install_default_templates()

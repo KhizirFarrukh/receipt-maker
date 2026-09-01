@@ -108,6 +108,13 @@ DATE_PARSE_FORMATS = (
 FILENAME_FIELD_OPTIONS = ("date", "name", "email", "phone")
 DEFAULT_FILENAME_FIELDS = ["date", "name"]
 
+#: Placeholders a receipt filename may use. `invoice_no` is required in every
+#: pattern -- see validate() -- because it is the only value guaranteed unique.
+#: Without it two receipts on the same day for the same customer collide, and
+#: the collision prompt starts asking about files that look identical.
+FILENAME_TOKENS = ("invoice_no", "date", "name", "email", "phone",
+                   "receipt_type")
+
 # ------------------- schema -------------------
 #: Bumped whenever appsettings.json is *restructured*. Adding a key with a
 #: default does not need a bump -- deep-merge already fills it in.
@@ -203,6 +210,11 @@ DEFAULT_APP_SETTINGS = {
         "start": INVOICE_START_NUMBER,
         "counter_file": "invoices/.counters.json",
         "reconcile_with_filenames": True,
+        # Empty means "build the name from filename_config.json", which is what
+        # every existing install does. Set a pattern to take over:
+        #   "{invoice_no}-{date}-{name}"  ->  INV-W1001-01-Jan-2026-Ada.pdf
+        # Placeholders are listed in FILENAME_TOKENS; {invoice_no} is required.
+        "filename_pattern": "",
     },
     # Document-level tax, applied on top of (or backed out of) the line totals.
     #   mode "exclusive" -- tax is added to the subtotal (US/UK-style quoting)
@@ -456,6 +468,13 @@ DEFAULT_STRINGS = {
         "taxes": "Taxes",
         "discounts": "Discounts",
         "shipping": "Shipping Fees",
+        # The heading at the top of the receipt. A literal in the template
+        # until now, which meant translating it or calling it an INVOICE meant
+        # editing HTML.
+        "document_title": "SALES RECEIPT",
+        # Printed when a receipt is reissued from history, so a second copy in
+        # a customer's hands is not mistaken for a second sale.
+        "duplicate_notice": "DUPLICATE",
         "shipment_marker": "Shipment {n} of {total}",
         "payment_fee": "Payment charge",
         "payment_tax": "Payment tax",
@@ -674,6 +693,25 @@ def validate(settings, filename=None):
     if not isinstance(invoice.get("reconcile_with_filenames", True), bool):
         raise ConfigError(
             "must be true or false", filename, "invoice.reconcile_with_filenames")
+
+    pattern = invoice.get("filename_pattern", "")
+    if not isinstance(pattern, str):
+        raise ConfigError("must be text", filename, "invoice.filename_pattern")
+    if pattern.strip():
+        unknown = [token for token in re.findall(r"\{([^{}]*)\}", pattern)
+                   if token not in FILENAME_TOKENS]
+        if unknown:
+            raise ConfigError(
+                f"uses {', '.join(repr(u) for u in unknown)}, which is not a "
+                f"filename placeholder. Available: "
+                f"{', '.join('{' + t + '}' for t in FILENAME_TOKENS)}",
+                filename, "invoice.filename_pattern")
+        if "{invoice_no}" not in pattern:
+            raise ConfigError(
+                "must contain {invoice_no}. It is the only part of a receipt "
+                "that is guaranteed unique -- without it, two receipts on the "
+                "same day for the same customer overwrite each other",
+                filename, "invoice.filename_pattern")
 
     tax = settings.get("tax")
     if not isinstance(tax, dict):

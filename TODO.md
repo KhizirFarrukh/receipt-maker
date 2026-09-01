@@ -177,9 +177,24 @@ pricing mistake — so the UI must name which one it is using:
       logo or an expiring certificate reports and still exits 0, so the command stays usable in a
       build script. `EXIT_ENVIRONMENT` (6) is its own code so a script can tell it from a config or
       render failure.
-- [ ] **Stage 8 — polish.** Configurable filename patterns (and the validation that a pattern must
-      contain the invoice-number token), reprint from archive with a DUPLICATE badge, "restore
-      default templates", pinned Playwright version.
+- [x] **Stage 8 — polish. DONE.**
+      - **Filename patterns.** `invoice.filename_pattern`, e.g. `{invoice_no}-{date}-{name}`,
+        with `{email}`, `{phone}` and `{receipt_type}` too. Empty keeps today's names exactly, and
+        the old `filename_config.json` field list is now read as a way of *writing* a pattern, so
+        there is one mechanism rather than two. A pattern **must contain `{invoice_no}`** — it is
+        the only part guaranteed unique, and without it two receipts on one day for one customer
+        overwrite each other. An unknown placeholder is refused with the real ones listed.
+      - **DUPLICATE on a reissue.** Decided by the history rather than a checkbox: a second PDF for
+        a number already issued *is* a second copy. It reuses the lookup stock already needed, so
+        history is read once.
+      - **`document.title`.** The receipt heading is `strings.json → totals.document_title` instead
+        of a literal in `receipt_info.html`.
+      - **Restore default templates** (Tools). The way back from an edit that broke rendering.
+        Copies what it replaces into a dated folder first — this is the recovery tool, so it must
+        not itself lose work.
+      - **Pinned dependencies.** `playwright`, `pyhanko` and `cryptography` are pinned exactly.
+        The Playwright version *is* the Chromium version, and a different Chromium lays out a PDF
+        differently, so a loose range means one receipt can look different on two machines.
 - [ ] **Neutral defaults.** `Templates/terms.html` still carries Chawla Tech wording. It is an
       ordinary editable template now, so this is a content edit — but the shipped default should be
       generic. (`footer.html` was neutralised when the policy links landed.)

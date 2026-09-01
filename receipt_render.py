@@ -516,7 +516,8 @@ BLOCK_CONTEXTS = {
     "styles.css": {"keep_rows_whole"},
     "receipt_info.html": {"type_badge", "invoice_no", "date", "customer_name",
                           "customer_phone", "customer_email",
-                          "custom_receipt_fields"},
+                          "custom_receipt_fields", "document_title",
+                          "duplicate_notice"},
     "field_row.html": {"label", "value", "value_class"},
     "items_table.html": {"header_cells", "rows"},
     "item_header_cell.html": {"label", "css_class"},
@@ -571,7 +572,8 @@ def _block(templates, name, context=None):
     return rendered[:-1] if rendered.endswith("\n") else rendered
 
 
-def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online", shipping=0.0):
+def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online",
+               shipping=0.0, is_duplicate=False):
     """Render a complete receipt document.
 
     Signature unchanged from Stage 1 so the GUI, cli.py and the fidelity test
@@ -589,6 +591,10 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
             "items": items,
             "receipt_type": receipt_type,
             "shipping": shipping,
+            # A second PDF for a number that has already been issued. The
+            # receipt says so on its face, because two identical copies in a
+            # customer's hands cannot be told from being charged twice.
+            "is_duplicate": is_duplicate,
         },
         templates,
         resource_base=file_url_for_directory(RESOURCE_DIR),
@@ -778,6 +784,12 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     receipt_type = data.get("receipt_type", "")
     receipt_info = _block(templates, "receipt_info.html", {
         "type_badge": config.receipt_type_by_label(receipt_type).get("badge_text", ""),
+        "document_title": totals_labels.get("document_title", "SALES RECEIPT"),
+        # Only when the caller says so. A reissue is a second copy of one sale,
+        # and a customer holding two identical receipts cannot tell that from
+        # having been charged twice.
+        "duplicate_notice": (totals_labels.get("duplicate_notice", "DUPLICATE")
+                             if data.get("is_duplicate") else ""),
         "invoice_no": data.get("invoice_no", ""),
         "date": data.get("date", ""),
         "customer_name": data.get("customer_name", ""),

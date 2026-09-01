@@ -98,6 +98,18 @@
     /* A scanned handwritten signature. Decorative only -- the cryptographic
        signature is the PAdES one over the document bytes, which is not
        something a stylesheet can show. */
+    /* A reissued receipt. Loud on purpose: two identical receipts in a
+       customer's hands are indistinguishable from being charged twice. */
+    .duplicate-notice {
+        text-align: center;
+        font-size: 10pt;
+        font-weight: bold;
+        letter-spacing: 2px;
+        color: #b91c1c;
+        border: 2px solid #b91c1c;
+        padding: 3px 0;
+        margin-bottom: 12px;
+    }
     .signature-block {
         margin-top: 26px;
         text-align: right;

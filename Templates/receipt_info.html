@@ -1,5 +1,6 @@
-{{! template_api_version: 1 }}<div class="receipt-title">SALES RECEIPT</div>
-<div class="type-badge">{{type_badge}}</div>
+{{! template_api_version: 1 }}<div class="receipt-title">{{document_title}}</div>
+<div class="type-badge">{{type_badge}}</div>{{#if duplicate_notice}}
+<div class="duplicate-notice">{{duplicate_notice}}</div>{{/if}}
 
 <table class="meta-table">
     <tr>

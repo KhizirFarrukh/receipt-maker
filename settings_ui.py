@@ -80,6 +80,12 @@ SETTINGS_SECTIONS = [
         ("invoice.prefix", "Invoice prefix", "text",
          {"help": "Changing this starts a new number series."}),
         ("invoice.start", "First number", "int", {}),
+        ("invoice.filename_pattern", "Receipt filename", "text",
+         {"help": "Leave empty to keep naming receipts the way they are named "
+                  "now. Otherwise: {invoice_no}-{date}-{name}, and also "
+                  "{email}, {phone}, {receipt_type}. {invoice_no} is required "
+                  "-- it is the only part guaranteed unique, and without it two "
+                  "receipts on one day for one customer overwrite each other."}),
         ("invoice.reconcile_with_filenames", "Cross-check against saved receipts", "bool",
          {"help": "Warns if the counter and the files in invoices/ disagree."}),
     ]),
