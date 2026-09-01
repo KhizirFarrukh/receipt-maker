@@ -212,7 +212,10 @@ class Stage1GenerationUX(unittest.TestCase):
         orig_gen, orig_ask = receipt_service.generate, main.ask_with_memory
         steps = []
 
-        def fake_generate(data, out_path, progress_cb=None):
+        # **kwargs: generate() grows optional arguments, and a stub with a
+        # fixed signature turns that into a TypeError the worker reports as a
+        # failed receipt -- which is a confusing way to find out.
+        def fake_generate(data, out_path, progress_cb=None, **kwargs):
             for i in range(1, receipt_service.GENERATION_STEPS + 1):
                 if progress_cb:
                     progress_cb(i, f"step {i}")
@@ -242,7 +245,7 @@ class Stage1GenerationUX(unittest.TestCase):
         orig_gen, orig_err = receipt_service.generate, main.show_error
         captured = {}
 
-        def boom(data, out_path, progress_cb=None):
+        def boom(data, out_path, progress_cb=None, **kwargs):
             raise RuntimeError("signing key not found")
 
         try:

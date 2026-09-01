@@ -299,6 +299,12 @@ DEFAULT_APP_SETTINGS = {
         "enabled": False,
     },
     "inventory": {
+        # Warn at the till when a sale leaves stock at or below this. 0 means
+        # "warn when it runs out"; set 3 to hear about it while there is still
+        # time to reorder. The warning never blocks a sale -- it is said after
+        # the receipt exists, because a stale count must not stop a customer
+        # being served.
+        "low_stock_threshold": 0,
         "track_stock": False,
     },
     # Policy pages linked from the receipt footer. Empty means "no link": the
@@ -923,6 +929,10 @@ def validate(settings, filename=None):
         raise ConfigError("must be an object", filename, "inventory")
     if not isinstance(inventory.get("track_stock", False), bool):
         raise ConfigError("must be true or false", filename, "inventory.track_stock")
+    threshold = inventory.get("low_stock_threshold", 0)
+    if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 0:
+        raise ConfigError("must be a whole number of units, zero or more",
+                          filename, "inventory.low_stock_threshold")
 
     links = settings.get("links")
     if not isinstance(links, dict):

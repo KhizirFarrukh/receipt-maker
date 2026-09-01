@@ -257,7 +257,7 @@ def render_pdf(body_html, pdf_path):
 
 
 # ------------------- orchestration -------------------
-def generate(data, out_path, progress_cb=None):
+def generate(data, out_path, progress_cb=None, warnings=None):
     """Build -> render -> sign a receipt at out_path. Returns True if signed.
 
     data keys: inv_no, date_str, cust, phone, email, items, receipt_type, shipping.
@@ -311,7 +311,8 @@ def generate(data, out_path, progress_cb=None):
     # anything was written and before the new record is appended.
     product_catalogue.record_sale(
         data.get("inv_no", ""), data.get("items"),
-        previous.get("items") if previous else None)
+        previous.get("items") if previous else None,
+        warnings=warnings)
 
     receipt_history.record(data, out_path, signed)
 

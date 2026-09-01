@@ -75,9 +75,17 @@ Pick a product instead of retyping its details on every receipt.
       twice, and overselling is recorded (negative, with a warning) rather than refused, since
       blocking a sale over a stale count is worse than showing a number that prompts a recount.
       Off by default.
-- [ ] Serial-number selection: sell a *specific* held serial rather than typing one.
-      **Superseded in scope by §6.1** — a line of qty 3 needs *three* serials, not one.
-- [ ] A low-stock warning at the point of sale, rather than only in the log.
+- [x] **Serial-number selection — DONE.** The per-unit grid (§6.1) offers the serials the
+      catalogue says are in stock, and selling takes *those* serials off the shelf rather than only
+      decrementing a count — otherwise the held list drifts away from the number and stops being
+      worth offering. The box stays editable, because a unit can predate the catalogue and refusing
+      an unknown serial would block a real sale. Reissuing adjusts by the difference and voiding
+      puts them all back, matching how the count already behaved.
+- [x] **Low-stock warning at the point of sale — DONE.** `inventory.low_stock_threshold`: 0
+      warns when something runs out, 3 warns while there is still time to reorder. It rides along
+      with the "receipt saved" confirmation rather than arriving as a second dialog, and it is said
+      **after** the receipt is written — a stale stock figure must never stop a customer being
+      served.
 - [x] **Voiding a receipt — DONE.** Tools → Receipt History → **Void…** marks a receipt void
       and puts its stock back. The two halves pull opposite ways on purpose: the stock
       returns, because a count can be recounted and goods that were never sold are still on

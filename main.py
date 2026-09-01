@@ -759,7 +759,8 @@ class ReceiptApp:
                     "what says how many are needed.", parent=dialog)
                 return
             entered = self.open_units_dialog(
-                dialog, unit_keys, unit_state["units"], qty)
+                dialog, unit_keys, unit_state["units"], qty,
+                sku=str(vars_["sku"].get()).strip() if "sku" in vars_ else "")
             if entered is not None:
                 unit_state["units"] = entered
                 refresh_units_summary()
@@ -942,7 +943,20 @@ class ReceiptApp:
         dialog.focus_set()
         self.root.wait_window(dialog)
 
-    def open_units_dialog(self, parent, keys, units, qty):
+    def held_serials_for(self, sku):
+        """Serials the catalogue says are in stock for this SKU.
+
+        Best-effort: a catalogue that will not load must not stop somebody
+        entering serials by hand, which is what the box did before it offered
+        anything.
+        """
+        try:
+            import product_catalogue
+            return product_catalogue.held_serials(product_catalogue.load(), sku)
+        except Exception:                        # noqa: BLE001 - never block a sale
+            return []
+
+    def open_units_dialog(self, parent, keys, units, qty, sku=""):
         """Collect one row of values for each thing sold. Returns None if cancelled.
 
         A line of quantity 3 is three physical units, and each carries its own
@@ -960,6 +974,7 @@ class ReceiptApp:
             labels.setdefault(key, key)
 
         existing = line_units.normalise({line_units.UNITS_KEY: units}, keys, qty)
+        held = self.held_serials_for(sku) if "serial" in keys else []
 
         win = tk.Toplevel(parent)
         win.title("Per-item details")
@@ -969,8 +984,11 @@ class ReceiptApp:
 
         ttk.Label(
             win, padding=(12, 10, 12, 4), wraplength=460, justify=tk.LEFT,
-            text=f"One row for each of the {qty} item(s) on this line. Leave a box "
-                 f"blank if you do not have that detail yet -- the line still saves.",
+            text=(f"One row for each of the {qty} item(s) on this line. Leave a "
+                  f"box blank if you do not have that detail yet -- the line "
+                  f"still saves."
+                  + (f"\n\n{len(held)} serial(s) in stock for {sku}; pick one "
+                     f"or type another." if held else "")),
         ).grid(row=0, column=0, sticky=tk.W)
 
         # A canvas is the only way to scroll a grid of widgets in tkinter.
@@ -996,7 +1014,14 @@ class ReceiptApp:
             row_vars = {}
             for column, key in enumerate(keys, start=1):
                 var = tk.StringVar(value=existing[index].get(key, ""))
-                entry = ttk.Entry(table, textvariable=var, width=INPUT_WIDTH)
+                if key == "serial" and held:
+                    # Offer what is actually on the shelf, but stay editable: a
+                    # unit can predate the catalogue, and refusing a serial it
+                    # has never heard of would block a legitimate sale.
+                    entry = ttk.Combobox(table, textvariable=var, values=held,
+                                         width=INPUT_WIDTH - 2)
+                else:
+                    entry = ttk.Entry(table, textvariable=var, width=INPUT_WIDTH)
                 entry.grid(row=index + 1, column=column, padx=6, pady=2, sticky=tk.EW)
                 # A scanner types the value then presses Enter. Enter must move
                 # to the next box, not submit -- otherwise scanning the first
@@ -1845,8 +1870,13 @@ class ReceiptApp:
 
         def worker():
             try:
-                signed = receipt_service.generate(data, out_path, progress_cb)
-                result_q.put(("done", signed))
+                # Collected in the worker and reported on the main thread with
+                # the result: a low-stock notice belongs with "receipt saved",
+                # not in a second dialog a moment later.
+                stock_warnings = []
+                signed = receipt_service.generate(
+                    data, out_path, progress_cb, warnings=stock_warnings)
+                result_q.put(("done", signed, stock_warnings))
             except Exception as exc:  # noqa: BLE001 - reported via show_error
                 result_q.put(("error", exc, traceback.format_exc()))
 
@@ -1871,7 +1901,8 @@ class ReceiptApp:
                         status_var.set(label)
                     elif msg[0] == "done":
                         close_dialog()
-                        self._on_generated(out_path, msg[1])
+                        self._on_generated(out_path, msg[1],
+                                           msg[2] if len(msg) > 2 else None)
                         return
                     elif msg[0] == "error":
                         _, exc, tb = msg
@@ -1892,21 +1923,37 @@ class ReceiptApp:
 
         self.root.after(50, poll)
 
-    def _on_generated(self, out_path, signed):
+    def _on_generated(self, out_path, signed, stock_warnings=None):
         state = "signed" if signed else "unsigned"
         self.status_label.config(text=f"Saved ({state}): {out_path}")
         self.refresh_invoice_number()
         logger.info("Generated %s (%s)", out_path, state)
 
+        # Said after the sale, never before it: the receipt is already written
+        # and a stale stock count must not stop a customer being served. It
+        # rides along with the confirmation rather than arriving as a second
+        # dialog, which would just be dismissed.
+        notice = ""
+        if stock_warnings:
+            notice = "\n\nStock: " + "\n       ".join(stock_warnings)
+            self.status_label.config(
+                text=f"Saved ({state}): {out_path} — {stock_warnings[0]}")
+
         ui = load_app_settings().get("ui", {})
         if ui.get("ask_open_folder", True):
             answer, remember = ask_with_memory(
                 self.root, "Receipt generated",
-                f"✓ Receipt {state} and saved:\n{out_path}\n\nOpen the containing folder?")
+                f"✓ Receipt {state} and saved:\n{out_path}{notice}"
+                f"\n\nOpen the containing folder?")
             if remember:
                 self._remember_open_folder(answer)
         else:
             answer = ui.get("open_folder_after_generate", False)
+            if stock_warnings:
+                # Nothing else would show it: the confirmation dialog is the
+                # only place these appear, and it was switched off.
+                messagebox.showinfo("Stock", "\n".join(stock_warnings),
+                                    parent=self.root)
 
         if answer:
             self._open_folder(os.path.dirname(out_path))

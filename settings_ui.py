@@ -107,6 +107,10 @@ SETTINGS_SECTIONS = [
                   "are actually correct — otherwise they go straight to negative. "
                   "A failed receipt deducts nothing, and correcting a receipt "
                   "adjusts by the difference rather than deducting twice."}),
+        ("inventory.low_stock_threshold", "Warn when stock drops to", "int",
+         {"help": "0 warns when something runs out. Set 3 to hear about it "
+                  "while there is still time to reorder. The warning appears "
+                  "after the receipt is saved and never blocks a sale."}),
     ]),
     ("Interface", [
         ("ui.ask_open_folder", "Ask to open the folder after generating", "bool", {}),

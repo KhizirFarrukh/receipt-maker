@@ -358,19 +358,19 @@ class ThreadedGeneration(MainTestCase):
             time.sleep(0.005)
 
     def test_a_successful_run_reports_and_re_enables(self):
-        receipt_service.generate = lambda d, o, cb=None: True
+        receipt_service.generate = lambda d, o, cb=None, **kw: True
         self.drive(os.path.join(self.dir, "invoices", "x.pdf"))
         self.assertFalse(self.app._generating)
         self.assertEqual(str(self.app.generate_button["state"]), "normal")
         self.assertIn("signed", self.app.status_label["text"])
 
     def test_an_unsigned_run_says_unsigned(self):
-        receipt_service.generate = lambda d, o, cb=None: False
+        receipt_service.generate = lambda d, o, cb=None, **kw: False
         self.drive(os.path.join(self.dir, "invoices", "x.pdf"))
         self.assertIn("unsigned", self.app.status_label["text"])
 
     def test_a_failure_surfaces_a_diagnostic_with_a_traceback(self):
-        def boom(d, o, cb=None):
+        def boom(d, o, cb=None, **kw):
             raise RuntimeError("signing key not found")
         receipt_service.generate = boom
         self.drive(os.path.join(self.dir, "invoices", "x.pdf"))

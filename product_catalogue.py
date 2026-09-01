@@ -197,6 +197,111 @@ def quantities_by_sku(items):
     return totals
 
 
+def held_serials(catalogue, sku):
+    """The serial numbers this SKU has in stock, in the order they were entered.
+
+    Matches a variant's own SKU as well as a product's, because a variant is
+    what is actually sold when one exists.
+    """
+    wanted = str(sku or "").strip().lower()
+    if not wanted:
+        return []
+    for entry in sellable_items(catalogue):
+        if str(entry.get("sku", "") or "").strip().lower() == wanted:
+            return [str(serial) for serial in entry.get("serial_numbers") or []
+                    if str(serial).strip()]
+    return []
+
+
+def serials_by_sku(items):
+    """{sku: [serial, ...]} actually named on a receipt's lines.
+
+    Reads the per-unit records (line_units), which is where a serial lives once
+    a line can sell more than one of something. A blank unit contributes
+    nothing: a line where only two of three serials were captured should return
+    the two it has, not an empty string standing in for the third.
+    """
+    found = {}
+    for item in items or []:
+        sku = str(item.get("sku", "") or "").strip().lower()
+        if not sku:
+            continue
+        for unit in item.get("units") or []:
+            if not isinstance(unit, dict):
+                continue
+            serial = str(unit.get("serial", "") or "").strip()
+            if serial:
+                found.setdefault(sku, []).append(serial)
+    return found
+
+
+def serial_deltas(new_items, previous_items=None):
+    """(to_remove, to_restore) serials per SKU for this generation.
+
+    The same reissue subtlety as `stock_deltas`: correcting a receipt writes it
+    again, so a serial that was on it before and still is must not be removed
+    twice, and one that has been taken off the receipt has not been sold and
+    belongs back on the shelf.
+    """
+    new = serials_by_sku(new_items)
+    old = serials_by_sku(previous_items) if previous_items else {}
+
+    remove, restore = {}, {}
+    for sku in set(new) | set(old):
+        before = old.get(sku, [])
+        after = new.get(sku, [])
+        gone = [s for s in after if s not in before]
+        back = [s for s in before if s not in after]
+        if gone:
+            remove[sku] = gone
+        if back:
+            restore[sku] = back
+    return remove, restore
+
+
+def apply_serial_deltas(catalogue, remove, restore):
+    """Take sold serials off the shelf and put un-sold ones back.
+
+    A serial that is not in the held list is left alone rather than reported:
+    somebody typing a serial the catalogue never knew about is ordinary -- the
+    unit may predate the catalogue -- and it is not a reason to interrupt a sale.
+    """
+    if not remove and not restore:
+        return catalogue, False
+
+    changed = False
+
+    def adjust(entry):
+        nonlocal changed
+        sku = str(entry.get("sku", "") or "").strip().lower()
+        held = entry.get("serial_numbers")
+        if not isinstance(held, list):
+            if sku not in remove and sku not in restore:
+                return
+            held = []
+
+        updated = [str(s) for s in held]
+        for serial in remove.get(sku, []):
+            if serial in updated:
+                updated.remove(serial)
+                changed = True
+        for serial in restore.get(sku, []):
+            if serial not in updated:
+                updated.append(serial)
+                changed = True
+        if updated != held:
+            entry["serial_numbers"] = updated
+
+    for product in catalogue.get("products", []):
+        if not isinstance(product, dict):
+            continue
+        adjust(product)
+        for variant in product.get("variants") or []:
+            if isinstance(variant, dict):
+                adjust(variant)
+    return catalogue, changed
+
+
 def stock_deltas(new_items, previous_items=None):
     """How much stock each SKU should lose for this generation.
 
@@ -216,7 +321,7 @@ def stock_deltas(new_items, previous_items=None):
     return deltas
 
 
-def apply_stock_deltas(catalogue, deltas):
+def apply_stock_deltas(catalogue, deltas, threshold=0):
     """Subtract deltas from the matching products. Returns (catalogue, changed, shortfalls).
 
     A count going negative is reported but never refused: the stock figure is
@@ -241,7 +346,12 @@ def apply_stock_deltas(catalogue, deltas):
         updated = current - deltas[sku]
         entry["stock_count"] = updated
         changed = True
-        if updated < 0:
+        # Negative means more was sold than the catalogue thought was held, and
+        # is always worth saying. At or below the threshold is not a shortfall
+        # but is worth saying while there is still time to reorder -- and with
+        # the default threshold of 0 that covers running out, which is the one
+        # every shop wants to hear about.
+        if updated < 0 or updated <= threshold:
             shortfalls.append((entry.get("sku", ""), updated))
 
     for product in catalogue.get("products", []):
@@ -255,11 +365,18 @@ def apply_stock_deltas(catalogue, deltas):
     return catalogue, changed, shortfalls
 
 
-def record_sale(receipt_no, items, previous_items=None, settings=None):
+def record_sale(receipt_no, items, previous_items=None, settings=None,
+                warnings=None):
     """Deduct a receipt's lines from stock. Never raises.
 
     Called *after* the receipt exists, so a failed render deducts nothing. Does
     nothing at all unless inventory.track_stock is on.
+
+    `warnings` is an optional list to append low-stock messages to, so they can
+    reach the person who just made the sale instead of only the log. It is a
+    list rather than a return value because this function must stay
+    unfailable -- every caller ignores its result already, and adding a second
+    thing to check would be a new way to get it wrong.
     """
     settings = settings if settings is not None else config.load_app_settings()
     if not settings.get("inventory", {}).get("track_stock", False):
@@ -267,10 +384,18 @@ def record_sale(receipt_no, items, previous_items=None, settings=None):
 
     try:
         deltas = stock_deltas(items, previous_items)
-        if not deltas:
+        remove, restore = serial_deltas(items, previous_items)
+        if not deltas and not remove and not restore:
             return False
         catalogue = load()
-        catalogue, changed, shortfalls = apply_stock_deltas(catalogue, deltas)
+        threshold = settings.get("inventory", {}).get("low_stock_threshold", 0)
+        catalogue, changed, shortfalls = apply_stock_deltas(
+            catalogue, deltas, threshold)
+        # Serials follow the count. Selling one unit should take *that* serial
+        # off the shelf, not merely decrement a number -- otherwise the held
+        # list drifts away from the count and stops being worth offering.
+        catalogue, serials_changed = apply_serial_deltas(catalogue, remove, restore)
+        changed = changed or serials_changed
         if not changed:
             return False
         save(catalogue)
@@ -278,6 +403,15 @@ def record_sale(receipt_no, items, previous_items=None, settings=None):
             logger.warning(
                 "Stock for %r is now %d after %s. The receipt was still issued -- "
                 "recount if that looks wrong.", sku, level, receipt_no)
+            if warnings is not None:
+                if level < 0:
+                    warnings.append(
+                        f"{sku}: stock is now {level}. More were sold than the "
+                        f"catalogue thought were held -- worth a recount.")
+                elif level == 0:
+                    warnings.append(f"{sku}: that was the last one in stock.")
+                else:
+                    warnings.append(f"{sku}: only {level} left in stock.")
         return True
     except Exception as exc:  # noqa: BLE001 - stock must never fail a receipt
         logger.warning("Could not update stock for %s: %s", receipt_no, exc)
