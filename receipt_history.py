@@ -57,6 +57,24 @@ def _as_text(value):
 OPTIONAL_KEYS = ("payment_method", "shipments", "installment")
 
 
+def _custom_receipt_keys():
+    """Receipt-level field keys from fields.json, whatever they are called.
+
+    Carried by name rather than by a fixed list, because the fixed list is what
+    went wrong: order notes (a configured receipt field) were dropped on the way
+    into history, so reloading a receipt to correct it lost them. Anything a
+    shop adds under Tools -> Fields & Columns is a receipt-level value the same
+    way, and none of them should need this file to be edited again.
+    """
+    try:
+        fields = config.load_fields()
+    except Exception:                            # noqa: BLE001 - never fail a record
+        return []
+    return [str(field.get("key", "")).strip()
+            for field in fields.get("receipt_fields") or []
+            if isinstance(field, dict) and str(field.get("key", "")).strip()]
+
+
 def _optional(source):
     """The optional receipt-level values that are actually present."""
     out = {}
@@ -72,6 +90,13 @@ def _optional(source):
             value = _as_text(value)
         if value:
             out[key] = value
+
+    for key in _custom_receipt_keys():
+        if key in OPTIONAL_KEYS or key in out:
+            continue
+        value = _as_text(source.get(key, "")).strip()
+        if value:
+            out[key] = value
     return out
 
 
@@ -83,15 +108,23 @@ def build_record(data, pdf_path="", signed=False, now=None):
         record = {}
         for key, value in item.items():
             if key == line_units.UNITS_KEY:
-                # Per-unit records are the one structured value on a line. Text
-                # is right for everything else -- a quantity reloaded as the
-                # string it was typed as re-renders identically -- but stringing
-                # this one would store "[{'serial': ...}]" and lose the serials
-                # the moment the receipt was reloaded to be corrected.
+                # Per-unit records are a structured value on a line. Text is
+                # right for everything else -- a quantity reloaded as the string
+                # it was typed as re-renders identically -- but stringing this
+                # one would store "[{'serial': ...}]" and lose the serials the
+                # moment the receipt was reloaded to be corrected.
                 record[key] = [
                     {k: _as_text(v) for k, v in unit.items()}
                     for unit in (value or []) if isinstance(unit, dict)
                 ]
+            elif key == "installment":
+                # The other structured value, and it was missed when units were
+                # handled: a per-line instalment plan came back as the string
+                # "{'months': 3, ...}", so correcting a financed receipt lost
+                # the plan. Found by the end-to-end test rather than by anything
+                # that looked at this loop.
+                record[key] = ({k: _as_text(v) for k, v in value.items()}
+                               if isinstance(value, dict) else {})
             elif isinstance(value, bool):
                 record[key] = value
             else:
