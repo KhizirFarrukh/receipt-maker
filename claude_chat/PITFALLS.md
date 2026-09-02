@@ -56,6 +56,21 @@ patching `messagebox` — so a real dialog opened and blocked. `tests/test_setti
 treats any unexpected `askyesno` as an assertion failure. **If you change which dialog function a
 code path calls, update the stub.**
 
+### Run the suite under `coverage` before believing it is green
+
+The plain suite passed for weeks while `coverage run -m unittest discover` aborted every single
+time, on a Tk teardown crash. Coverage changes when the garbage collector runs, and that is the
+only thing deciding whether a `tk.Variable` is collected before or after its interpreter dies.
+
+So "the suite is green" is not one fact, it is two. Check both, and treat a coverage run that
+prints no `Ran N tests` line as a failure rather than as a coverage number -- that is what an abort
+looks like, and `coverage report` will happily print a plausible percentage from the partial data
+it collected before the crash. It said 70.6% and nothing was actually wrong with the code.
+
+`tests/tk_support.py` is the fix: one `destroy(self)` helper, used by every test that builds a
+root. Three of sixteen files had a private copy of it, which is exactly how the other thirteen
+came to be missing it.
+
 ### tkinter teardown can abort the whole process
 
 A `tk.StringVar` garbage-collected *after* its interpreter is gone raises from `__del__` and can

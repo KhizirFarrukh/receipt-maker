@@ -22,6 +22,7 @@ if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
 import config             # noqa: E402
+import tk_support          # noqa: E402
 import invoice_counter    # noqa: E402
 import main               # noqa: E402
 import receipt_service    # noqa: E402
@@ -70,7 +71,7 @@ class MainTestCase(unittest.TestCase):
          main.show_error, main.filedialog.askopenfilename,
          main.filedialog.askopenfilenames, receipt_service.generate) = self._saved
         self.app.__dict__.clear()
-        self.root.destroy()
+        tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         import receipt_render
         receipt_render.clear_template_cache()

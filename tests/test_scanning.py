@@ -31,6 +31,7 @@ import product_catalogue   # noqa: E402
 import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
+import tk_support          # noqa: E402
 
 
 def setUpModule():
@@ -75,7 +76,7 @@ class ScanTestCase(unittest.TestCase):
 
     def tearDown(self):
         main.messagebox.askyesno = self._askyesno
-        self.root.destroy()
+        tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         receipt_render.clear_template_cache()
         shutil.rmtree(self.dir, ignore_errors=True)

@@ -19,6 +19,7 @@ if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
 import config             # noqa: E402
+import tk_support          # noqa: E402
 import invoice_counter    # noqa: E402
 import receipt_service    # noqa: E402
 
@@ -279,7 +280,7 @@ class TreeviewEatsLeadingZeros(unittest.TestCase):
         self.app = main.ReceiptApp(self.root)
 
     def tearDown(self):
-        self.root.destroy()
+        tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         shutil.rmtree(self.dir, ignore_errors=True)
 

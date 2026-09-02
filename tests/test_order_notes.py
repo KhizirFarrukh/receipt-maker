@@ -28,6 +28,7 @@ import main                # noqa: E402
 import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
+import tk_support          # noqa: E402
 
 
 def setUpModule():
@@ -62,7 +63,7 @@ class FormTestCase(unittest.TestCase):
         self.app = main.ReceiptApp(self.root)
 
     def tearDown(self):
-        self.root.destroy()
+        tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         receipt_render.clear_template_cache()
         shutil.rmtree(self.dir, ignore_errors=True)

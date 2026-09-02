@@ -19,6 +19,7 @@ if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
 import config        # noqa: E402
+import tk_support          # noqa: E402
 import settings_ui   # noqa: E402
 
 
@@ -106,7 +107,7 @@ class EditorTestCase(unittest.TestCase):
     def tearDown(self):
         settings_ui.messagebox.showerror = self._original_error
         settings_ui.messagebox.askyesno = self._original_ask
-        self.root.destroy()
+        tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         shutil.rmtree(self.dir, ignore_errors=True)
 

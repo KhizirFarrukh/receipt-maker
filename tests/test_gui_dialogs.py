@@ -22,6 +22,7 @@ if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
 import config              # noqa: E402
+import tk_support          # noqa: E402
 import product_catalogue   # noqa: E402
 import receipt_history     # noqa: E402
 import receipt_signing     # noqa: E402
@@ -57,7 +58,7 @@ class DialogTestCase(unittest.TestCase):
         (settings_ui.messagebox.showerror, settings_ui.messagebox.showinfo,
          settings_ui.messagebox.askyesno,
          settings_ui.filedialog.askopenfilename) = self._saved
-        self.root.destroy()
+        tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         import receipt_render
         receipt_render.clear_template_cache()

@@ -30,6 +30,7 @@ import product_catalogue   # noqa: E402
 import settings_ui         # noqa: E402
 
 import gate_env            # noqa: E402
+import tk_support          # noqa: E402
 
 
 def setUpModule():
@@ -60,7 +61,7 @@ class PricingTestCase(unittest.TestCase):
 
     def tearDown(self):
         settings_ui.messagebox.showinfo = self._showinfo
-        self.root.destroy()
+        tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         shutil.rmtree(self.dir, ignore_errors=True)
 
