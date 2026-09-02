@@ -26,7 +26,7 @@ A Windows desktop app that generates A4 PDF sales receipts. Python **tkinter** G
 as HTML and rendered by headless **Chromium via Playwright**; packaged to a standalone `.exe` with
 **PyInstaller**. Receipts are digitally signed (PAdES) with **pyHanko**.
 
-It began hardwired to one shop (Chawla Tech, PKR). It is now white-label and configuration-driven:
+It began hardwired to one shop (one shop, in one currency). It is now white-label and configuration-driven:
 currency, dates, receipt types, tax, fields, columns, warranty options, templates and policy links
 are all configurable, and all editable **inside the app**.
 
@@ -165,7 +165,7 @@ has been regenerated exactly **once**, deliberately, when receipt-field styling 
 - **No signing key exists** in the repo. Signing is enabled by default, so a receipt cannot be
   generated until one is created — **Tools → Signing Keys → Create new key**. Set
   `signing.signer_name` first, since it becomes the certificate subject.
-- **`Templates/terms.html` still carries Chawla Tech wording.** It is an ordinary editable template
+- **`Templates/terms.html` still carries one shop's own wording.** It is an ordinary editable template
   now, so this is a content edit, but the shipped default should be generic.
 
 ## What to do next
@@ -192,5 +192,5 @@ What is genuinely left:
    in-app equivalent.
 
 The terms page and `document.title` were on this list and are done: the shipped `terms.html` is
-generic now, with the previous wording kept in `terms.chawlatech.html` and `terms_page.template`
+generic now, with the previous wording kept in `terms.<yourshop>.html` and `terms_page.template`
 pointing at it, and the heading is `strings.json → totals.document_title`.

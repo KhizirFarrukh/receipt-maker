@@ -37,7 +37,7 @@ class HistoryTestCase(unittest.TestCase):
     def setUp(self):
         self._app_dir = config.APP_DIR
         self.dir = tempfile.mkdtemp(prefix="rm-history-")
-        shutil.copy(os.path.join(PROJ, "appsettings.json"),
+        shutil.copy(os.path.join(PROJ, "appsettings.example.json"),
                     os.path.join(self.dir, "appsettings.json"))
         os.makedirs(os.path.join(self.dir, "invoices"), exist_ok=True)
         config.set_app_dir(self.dir)

@@ -643,7 +643,7 @@ class ProductBarcode(unittest.TestCase):
         import tempfile
         self._app_dir = config.APP_DIR
         self.dir = tempfile.mkdtemp(prefix="rm-barcode-")
-        shutil.copy(os.path.join(PROJ, "appsettings.json"),
+        shutil.copy(os.path.join(PROJ, "appsettings.example.json"),
                     os.path.join(self.dir, "appsettings.json"))
         config.set_app_dir(self.dir)
         self._cleanup = lambda: shutil.rmtree(self.dir, ignore_errors=True)

@@ -23,6 +23,7 @@ if PROJ not in sys.path:
 import cli               # noqa: E402
 import config            # noqa: E402
 import keygen            # noqa: E402
+import receipt_render    # noqa: E402
 import receipt_signing   # noqa: E402
 import verify_receipt    # noqa: E402
 
@@ -43,7 +44,7 @@ class CliTestCase(unittest.TestCase):
     def setUp(self):
         self._app_dir = config.APP_DIR
         self.dir = tempfile.mkdtemp(prefix="rm-cli-")
-        shutil.copy(os.path.join(PROJ, "appsettings.json"),
+        shutil.copy(os.path.join(PROJ, "appsettings.example.json"),
                     os.path.join(self.dir, "appsettings.json"))
         config.set_app_dir(self.dir)
         import receipt_render
@@ -94,8 +95,22 @@ class RenderHtml(CliTestCase):
         written = fake.buffer.getvalue()
         self.assertTrue(written.startswith(b"<!DOCTYPE html>"))
         self.assertIn("Ada Lovelace", written.decode("utf-8"))
-        self.assertIn("🛡".encode("utf-8"), written,
-                      "the emoji is the reason bytes are written rather than text")
+        # Something outside cp1252 has to reach stdout, or this proves nothing.
+        # It used to be an emoji in the shipped policy page; that page is
+        # generic now, so the test supplies its own -- and a customer whose name
+        # does not fit the console codepage is the realistic version of this
+        # anyway.
+        settings = config.load_app_settings()
+        html = receipt_render.render_receipt(
+            {"invoice_no": "INV-1", "date": "1 Jan 2026",
+             "customer_name": "Zoë Ünïcödé", "customer_phone": "",
+             "customer_email": "", "items": [], "receipt_type": "Online",
+             "shipping": 0},
+            receipt_render.load_templates(), strings=config.load_strings(),
+            currency=settings.get("currency"), fields=config.load_fields())
+        self.assertIn("Zoë", html)
+        self.assertIn("Zoë".encode("utf-8"), html.encode("utf-8"),
+                      "a name outside cp1252 is why stdout is written as bytes")
 
     def test_the_base_href_is_normalised_by_default(self):
         target = self.out_file()

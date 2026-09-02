@@ -217,9 +217,17 @@ class TheTermsPageIsSelectable(Stage8TestCase):
         with open(os.path.join(PROJ, "Templates", "terms.html"),
                   encoding="utf-8") as handle:
             shipped = handle.read()
-        for leak in ("Chawla Tech", "chawlatech", "339 282 5523", "@chawlatech"):
-            self.assertNotIn(leak, shipped,
-                             f"the shipped terms page still names {leak!r}")
+        # Patterns rather than one shop's actual details: naming them here would
+        # put them back into the repository this check exists to keep them out
+        # of, which is the mistake the check is about.
+        import re
+        for pattern, what in (
+                (r"\+?\d[\d\s().-]{8,}\d", "a phone number"),
+                (r"[\w.+-]+@[\w-]+\.[\w.]+", "an email address"),
+                (r"https?://(?!example\.)", "a live URL")):
+            self.assertIsNone(
+                re.search(pattern, shipped),
+                f"the shipped terms page carries what looks like {what}")
 
     def test_a_named_file_is_used_instead(self):
         config.install_default_templates()

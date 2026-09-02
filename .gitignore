@@ -276,6 +276,18 @@ tests/fixtures/env/state.json
 # receipts folder.
 invoices/.archive/
 
+# ===========================
+# This installation's own configuration and content
+# ===========================
+# appsettings.json holds the shop's business details, and its terms_page.template
+# can point at that shop's own policy file. Both are per-install, not source.
+# appsettings.example.json ships instead; the app writes a default on first run.
+appsettings.json
+
+# A shop's own terms/policy wording, kept beside the generic shipped one.
+Templates/terms.*.html
+!Templates/terms.html
+
 # The product catalogue is the user's own data, not source.
 products.json
 tests/fixtures/env/products.json

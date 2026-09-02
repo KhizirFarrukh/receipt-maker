@@ -30,7 +30,7 @@ class TempApp(unittest.TestCase):
     def setUp(self):
         self._app_dir = config.APP_DIR
         self.dir = tempfile.mkdtemp(prefix="rm-phaseh-")
-        shutil.copy(os.path.join(PROJ, "appsettings.json"),
+        shutil.copy(os.path.join(PROJ, "appsettings.example.json"),
                     os.path.join(self.dir, "appsettings.json"))
         config.set_app_dir(self.dir)
         receipt_render.clear_template_cache()
@@ -118,7 +118,8 @@ class FooterPolicyLinks(TempApp):
 
     def test_the_old_signature_notice_is_gone(self):
         self.assertNotIn("digitally signed", self.footer_body())
-        self.assertNotIn("chawlatech", self.footer_body().lower())
+        self.assertNotIn("@", self.footer_body(),
+                         "the shipped footer names no address")
 
     def test_no_urls_means_no_anchors_but_the_words_remain(self):
         body = self.footer_body()

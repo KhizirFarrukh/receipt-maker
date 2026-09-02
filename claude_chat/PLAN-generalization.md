@@ -19,7 +19,7 @@
 
 ## Context
 
-The app is currently hardwired to one store (Chawla Tech / PKR / chawlatech.pk). The entire receipt is
+The app is currently hardwired to one store (the original shop / PKR / the original shop.pk). The entire receipt is
 a single giant f-string in [build_html](main.py#L1192): fixed receipt fields, fixed line-item columns,
 hardcoded currency and labels, a hardcoded 3-way warranty dropdown in [open_item_dialog](main.py#L564),
 and an inline terms page in [warranty_policy_html](main.py#L1462). Signing (from the last task)
@@ -33,7 +33,7 @@ independently shippable stages.
 
 **Decisions (confirmed):** files-first configuration (GUI is for creating/verifying receipts; settings are
 JSON, layout is HTML files); a simple safe placeholder engine (no Jinja2, no arbitrary code); neutral
-defaults (`Your Company`, currency `$`, generic terms) — Chawla Tech/PKR live only in the user's local
+defaults (`Your Company`, currency `$`, generic terms) — the original shop/PKR live only in the user's local
 config. Same stack (Python/tkinter/Playwright/pyHanko). Req 4 (verify existing PDFs) is already built via
 **Tools → Verify Receipt** and will be carried into the generic app.
 

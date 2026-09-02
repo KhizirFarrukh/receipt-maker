@@ -214,7 +214,7 @@ pricing mistake — so the UI must name which one it is using:
         differently, so a loose range means one receipt can look different on two machines.
 - [x] **Neutral defaults — DONE, without changing anybody's receipts.** The terms page's *file*
       is now configurable (`terms_page.template`), so the shipped `terms.html` could be made
-      generic while the existing wording moved to `terms.chawlatech.html` with `appsettings.json`
+      generic while the existing wording moved to `terms.<yourshop>.html` with `appsettings.json`
       pointing at it. Receipts are byte-identical; a fresh clone no longer prints another
       business's policy, phone number and support email.
       - [ ] *One step left, and it is a repo decision rather than code:* `appsettings.json`,

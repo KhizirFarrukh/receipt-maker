@@ -86,8 +86,8 @@ reachable at build time).
       `--config-dir` is now genuinely implemented via `config.set_app_dir()` (C8).
 - [x] B5. `tzdata` pinned in `requirements.txt` (it was arriving only transitively).
 - [x] B6. **Neutrality leaks fixed where they were live defects.** `receipt_signing.py` hardcoded
-      the certificate subject to "Chawla Tech" and ignored `signing.signer_name` — proven by A9,
-      where a config saying "Your Company" produced a cert saying "Chawla Tech". Now
+      the certificate subject to "the original shop" and ignored `signing.signer_name` — proven by A9,
+      where a config saying "Your Company" produced a cert saying "the original shop". Now
       configuration-driven with neutral fallbacks; `keygen.py` derives it from appsettings and
       accepts `--org-name`/`--common-name`; the signature field name is neutral.
       Shipped `signing` defaults neutralised. **Still store-specific and deliberately deferred:**
@@ -420,8 +420,8 @@ form is still the fixed customer/phone/email layout.
 
 ## Open items for Stage 6+
 
-- Store-specific copy still lives in `Templates/terms.html` and `Templates/footer.html` (Chawla
-  Tech wording, chawlatech.pk links). These are now plain editable templates, so this is a
+- Store-specific copy still lives in `Templates/terms.html` and `Templates/footer.html` (one
+  shop's own wording and links). These are now plain editable templates, so this is a
   content edit rather than a code change — but shipping them as the neutral default is still
   outstanding.
 - `SALES RECEIPT`, `Receipt No:`, `Bill To:` etc. are literals inside `receipt_info.html`. That
