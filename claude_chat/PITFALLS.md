@@ -129,6 +129,16 @@ than importing the names, or they keep a stale copy from import time" — and `r
 not even doing that: it computed its own `APP_DIR`. If a path is a module-level constant, check
 what re-roots it.
 
+### pyHanko answers several different problems with the same silence
+
+`signers.SimpleSigner.load()` returns `None` -- not an exception -- for a missing key, a missing
+certificate, a mismatched pair, *and* an encrypted key with no passphrase. The catch-all message
+built from that ("check that the key and certificate match and that the passphrase is correct")
+names four possibilities and helps with none of them.
+
+`receipt_signing.key_problem()` asks the specific questions up front instead. If you add a
+signing failure mode, add it there rather than widening the catch-all.
+
 ## The golden gate
 
 ### The fixture caches templates

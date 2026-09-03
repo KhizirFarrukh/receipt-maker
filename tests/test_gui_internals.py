@@ -438,11 +438,18 @@ class SigningEdges(unittest.TestCase):
         self.assertTrue(receipt_signing.is_signed(plain))
 
     def test_signing_with_a_missing_key_is_a_runtime_error(self):
+        """And says *which* thing is missing.
+
+        This used to assert "Could not load", the catch-all pyHanko's silence
+        produced for every distinct problem. Naming the actual cause is the
+        point of the change; a message that could mean four things is not much
+        better than no message.
+        """
         from tests.test_signing import blank_pdf
         pdf = blank_pdf(os.path.join(self.dir, "d.pdf"))
         with self.assertRaises(RuntimeError) as ctx:
             receipt_signing.sign_pdf(pdf, os.path.join(self.dir, "nope.pem"), self.cert)
-        self.assertIn("Could not load", str(ctx.exception))
+        self.assertIn("no signing key", str(ctx.exception))
 
     def test_a_verified_result_reports_itself_as_verified(self):
         result = receipt_signing.VerifyResult(status=receipt_signing.VERIFIED, title="x")

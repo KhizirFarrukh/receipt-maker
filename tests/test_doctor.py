@@ -204,6 +204,112 @@ class FailuresStopAReceipt(DoctorTestCase):
         self.assertIn("FAIL", err)
 
 
+class AnUnreadableKeyIsCaught(DoctorTestCase):
+    """--doctor said "Ready to issue receipts" while every receipt failed.
+
+    It checked that the key file *existed* and that the certificate could be
+    read, and never tried to load the key itself. An encrypted key with no
+    passphrase therefore passed every check and then failed at the signing step
+    of every single receipt -- the exact situation this command exists to catch
+    before a customer is standing at the counter.
+    """
+
+    def encrypted_key(self):
+        """A real key, encrypted, with the passphrase deliberately not stored."""
+        folder = os.path.join(self.dir, "signing")
+        os.makedirs(folder, exist_ok=True)
+        key = os.path.join(folder, "private_key.pem")
+        cert = os.path.join(folder, "certificate.pem")
+        receipt_signing.generate_key_pair(key, cert, common_name="T",
+                                          org_name="T", passphrase="secret")
+        return key, cert
+
+    def test_an_encrypted_key_with_no_passphrase_fails(self):
+        key, cert = self.encrypted_key()
+        self.signing(enabled=True, private_key_path=key, certificate_path=cert,
+                     key_passphrase="")
+        code, _, err = self.run_doctor()
+        self.assertEqual(code, cli.EXIT_ENVIRONMENT)
+        self.assertIn("encrypted and no passphrase", err)
+
+    def test_it_says_what_to_do_about_it(self):
+        key, cert = self.encrypted_key()
+        self.signing(enabled=True, private_key_path=key, certificate_path=cert,
+                     key_passphrase="")
+        _, _, err = self.run_doctor()
+        self.assertIn("Tools -> Settings -> Signing", err)
+
+    def test_the_right_passphrase_passes(self):
+        key, cert = self.encrypted_key()
+        self.signing(enabled=True, private_key_path=key, certificate_path=cert,
+                     key_passphrase="secret")
+        code, out, _ = self.run_doctor()
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertIn("signing", out)
+
+    def test_an_unencrypted_key_passes(self):
+        folder = os.path.join(self.dir, "signing")
+        os.makedirs(folder, exist_ok=True)
+        key = os.path.join(folder, "private_key.pem")
+        cert = os.path.join(folder, "certificate.pem")
+        receipt_signing.generate_key_pair(key, cert, common_name="T", org_name="T")
+        self.signing(enabled=True, private_key_path=key, certificate_path=cert)
+        code, _, _ = self.run_doctor()
+        self.assertEqual(code, cli.EXIT_OK)
+
+
+class TheKeyProblemIsNamed(unittest.TestCase):
+    """pyHanko answers several distinct problems with the same silence."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="rm-keyproblem-")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def make(self, passphrase=None):
+        key = os.path.join(self.dir, "private_key.pem")
+        cert = os.path.join(self.dir, "certificate.pem")
+        receipt_signing.generate_key_pair(key, cert, common_name="T",
+                                          org_name="T", passphrase=passphrase)
+        return key, cert
+
+    def test_an_encrypted_key_is_detected_from_the_file(self):
+        key, _ = self.make(passphrase="secret")
+        self.assertTrue(receipt_signing.key_is_encrypted(key))
+
+    def test_a_plain_key_is_not(self):
+        key, _ = self.make()
+        self.assertFalse(receipt_signing.key_is_encrypted(key))
+
+    def test_a_missing_file_is_not_reported_as_encrypted(self):
+        self.assertFalse(receipt_signing.key_is_encrypted(
+            os.path.join(self.dir, "nothing.pem")))
+
+    def test_the_problem_names_the_missing_key(self):
+        problem = receipt_signing.key_problem(
+            os.path.join(self.dir, "nope.pem"), os.path.join(self.dir, "c.pem"))
+        self.assertIn("no signing key", problem)
+
+    def test_the_problem_names_the_missing_certificate(self):
+        key, cert = self.make()
+        os.remove(cert)
+        self.assertIn("no certificate", receipt_signing.key_problem(key, cert))
+
+    def test_the_problem_names_the_passphrase(self):
+        key, cert = self.make(passphrase="secret")
+        problem = receipt_signing.key_problem(key, cert, "")
+        self.assertIn("encrypted and no passphrase", problem)
+
+    def test_a_working_pair_has_no_problem(self):
+        key, cert = self.make()
+        self.assertEqual(receipt_signing.key_problem(key, cert), "")
+
+    def test_a_passphrase_that_is_supplied_clears_it(self):
+        key, cert = self.make(passphrase="secret")
+        self.assertEqual(receipt_signing.key_problem(key, cert, "secret"), "")
+
+
 class BrokenConfigStopsEarly(DoctorTestCase):
     def test_it_reports_the_config_and_gives_up(self):
         """Nothing below can run without config, so this one does stop."""

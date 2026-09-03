@@ -188,6 +188,44 @@ def known_certs_dir(cert_path):
 MIN_RSA_BITS = 2048
 
 
+def key_is_encrypted(key_path):
+    """Whether the private key file needs a passphrase to be read.
+
+    Cheap and text-only: the PEM header says so. Worth knowing *before* trying
+    to sign, because pyHanko answers an encrypted key with no passphrase by
+    returning None rather than raising, and "could not load the key" is not a
+    sentence anybody can act on.
+    """
+    try:
+        with open(key_path, "rb") as handle:
+            head = handle.read(200)
+    except OSError:
+        return False
+    return b"ENCRYPTED PRIVATE KEY" in head or b"Proc-Type: 4,ENCRYPTED" in head
+
+
+def key_problem(key_path, cert_path, passphrase=""):
+    """Why this key cannot sign, in a sentence, or "" if it can.
+
+    Checked up front rather than inferred from a failure, so the message names
+    the actual cause and what to do about it.
+    """
+    if not os.path.isfile(key_path):
+        return (f"There is no signing key at\n{key_path}\n\n"
+                f"Create one under Tools -> Signing Keys.")
+    if not os.path.isfile(cert_path):
+        return (f"There is no certificate at\n{cert_path}\n\n"
+                f"Create or import one under Tools -> Signing Keys.")
+    if key_is_encrypted(key_path) and not passphrase:
+        return (f"The signing key is encrypted and no passphrase is set, so it "
+                f"cannot be read.\n{key_path}\n\n"
+                f"Either set the passphrase under Tools -> Settings -> Signing, "
+                f"or import the key again under Tools -> Signing Keys -- the "
+                f"import asks for the passphrase once and saves the key so the "
+                f"app can read it without one.")
+    return ""
+
+
 class KeyImportError(RuntimeError):
     """An existing key could not be imported. Message is meant for the user."""
 
@@ -496,10 +534,15 @@ def sign_pdf(pdf_path, key_path, cert_path, *, passphrase=None, reason=None,
     except Exception as exc:
         raise RuntimeError(f"Could not load the signing key/certificate:\n{exc}") from exc
     if signer is None:
-        raise RuntimeError(
+        # pyHanko returns None rather than raising for several distinct
+        # problems, so ask what is actually wrong before falling back to the
+        # catch-all. An encrypted key with no passphrase is the common one and
+        # used to be indistinguishable from a mismatched pair.
+        problem = key_problem(key_path, cert_path, passphrase)
+        raise RuntimeError(problem or (
             "Could not load the signing key/certificate. Check that the key and "
             "certificate match and that the passphrase is correct."
-        )
+        ))
 
     metadata = signers.PdfSignatureMetadata(
         field_name=SIGNATURE_FIELD_NAME,

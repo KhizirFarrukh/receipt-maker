@@ -256,6 +256,18 @@ def _check_signing(report):
                     f"Tools -> Signing Keys.")
         return
 
+    # Whether the key can actually be *read*, not merely whether it exists.
+    # This check was missing, so --doctor reported "Ready to issue receipts"
+    # while every receipt failed at the signing step -- the exact situation it
+    # exists to catch.
+    import receipt_signing
+    problem = receipt_signing.key_problem(
+        key_path, cert_path,
+        settings.get("signing", {}).get("key_passphrase", ""))
+    if problem:
+        report.fail("signing", problem)
+        return
+
     try:
         import receipt_signing
         info = receipt_signing.certificate_info(cert_path)
