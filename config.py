@@ -127,6 +127,10 @@ TAX_ROW_TYPES = ("percent", "fixed")
 #: differently: "tax" is a levy a government imposes and the shop remits, "fee"
 #: is a private company's service charge and is not tax at all.
 PAYMENT_KINDS = ("fee", "tax")
+
+#: How a plain amount typed into a line's discount or tax box is read. See
+#: line_amounts.py -- "line" is the default because it is what already happened.
+LINE_AMOUNT_SCOPES = ("line", "unit")
 TAX_BASES = ("subtotal_after_discount", "subtotal")
 GROUP_STYLES = ("thousand", "indian", "none")
 SYMBOL_POSITIONS = ("prefix", "suffix")
@@ -285,6 +289,25 @@ DEFAULT_APP_SETTINGS = {
         "label": "Authorised signature",
         "width_px": 180,
     },
+    # How a plain discount or tax amount typed on a line is read. "line" takes
+    # it off the line once; "unit" takes it off each item, so 1,000 on a line
+    # of five is 5,000. Both are things shops do, which is why it is a setting.
+    #
+    # "line" is the default because it is what this app already did -- a
+    # reissued receipt has to reproduce the figures the customer was given.
+    #
+    # A value ending in "%" ignores this entirely: a percentage of the line is
+    # the same number whichever way you read it.
+    "line_amounts": {
+        "discount_scope": "line",
+        "tax_scope": "line",
+    },
+    # The Subtotal / Discounts / Taxes breakdown above the total normally
+    # appears only when there is something besides the line items to show.
+    # Turn this on to print it on every receipt.
+    "totals": {
+        "always_show_breakdown": False,
+    },
     # Shipping. A shop that never charges it should not have the box on the
     # form or the row on the receipt -- it was a label with no switch until the
     # section 6.6 audit went looking.
@@ -383,7 +406,7 @@ RESERVED_FIELD_KEYS = frozenset({
 #: get it too. The lists are replaced wholesale on load rather than merged (their
 #: order is the column order), so without a migration a new built-in would only
 #: ever reach brand-new installs.
-FIELDS_SCHEMA_VERSION = 6
+FIELDS_SCHEMA_VERSION = 7
 
 DEFAULT_FIELDS = {
     SCHEMA_VERSION_KEY: FIELDS_SCHEMA_VERSION,
@@ -425,6 +448,14 @@ DEFAULT_FIELDS = {
         # discount. `amount` above stays the gross, because redefining it would
         # change the figure on every receipt already being issued. Shipped
         # disabled; a shop wanting only the net turns `amount` off and this on.
+        # What the line's discount and tax actually came to, once the
+        # per-line/per-unit setting and any trailing "%" have been applied. The
+        # `discount` and `tax` columns above show what was *typed*; these show
+        # what it *cost*, and on a line of five those are different numbers.
+        {"key": "line_discount", "label": "Total Discount", "type": "computed",
+         "enabled": False},
+        {"key": "line_tax", "label": "Total Tax", "type": "computed",
+         "enabled": False},
         {"key": "line_total", "label": "Line Total", "type": "computed",
          "enabled": False},
         # The shop's own per-unit label, for stock it marks itself. Distinct
@@ -895,6 +926,25 @@ def validate(settings, filename=None):
             "the signature image is switched on but no file is set", filename,
             "signature_image.path")
 
+    line_amount_config = settings.get("line_amounts")
+    if not isinstance(line_amount_config, dict):
+        raise ConfigError("must be an object", filename, "line_amounts")
+    for key in ("discount_scope", "tax_scope"):
+        value = line_amount_config.get(key, "line")
+        if value not in LINE_AMOUNT_SCOPES:
+            raise ConfigError(
+                f"must be one of {', '.join(LINE_AMOUNT_SCOPES)} (got "
+                f"{value!r}). \"line\" takes the amount off the line once; "
+                f"\"unit\" takes it off each item.",
+                filename, f"line_amounts.{key}")
+
+    totals_config = settings.get("totals")
+    if not isinstance(totals_config, dict):
+        raise ConfigError("must be an object", filename, "totals")
+    if not isinstance(totals_config.get("always_show_breakdown", False), bool):
+        raise ConfigError("must be true or false", filename,
+                          "totals.always_show_breakdown")
+
     shipping = settings.get("shipping")
     if not isinstance(shipping, dict):
         raise ConfigError("must be an object", filename, "shipping")
@@ -1301,6 +1351,20 @@ def migrate_fields(fields, version):
                            if f["key"] == "notes")
             receipt_fields.append(dict(default))
             changed = True
+
+    if version < 7:
+        # v7 introduced the resolved per-line discount and tax columns. Both
+        # disabled, so no existing receipt gains a column.
+        defaults = {f["key"]: f for f in DEFAULT_FIELDS["line_item_fields"]}
+        items = fields.setdefault("line_item_fields", [])
+        present_now = {f.get("key") for f in items if isinstance(f, dict)}
+        index = next((i for i, f in enumerate(items)
+                      if isinstance(f, dict) and f.get("key") == "line_total"),
+                     len(items))
+        for key in ("line_tax", "line_discount"):
+            if key not in present_now:
+                items.insert(index, dict(defaults[key]))
+                changed = True
 
     if fields.get(SCHEMA_VERSION_KEY) != FIELDS_SCHEMA_VERSION:
         fields[SCHEMA_VERSION_KEY] = FIELDS_SCHEMA_VERSION

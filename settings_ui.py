@@ -60,6 +60,20 @@ SETTINGS_SECTIONS = [
          {"help": "Off reproduces how older versions printed line amounts."}),
     ]),
     ("Tax", [
+        ("line_amounts.discount_scope", "A discount typed on a line is", "choice",
+         {"values": list(config.LINE_AMOUNT_SCOPES),
+          "help": "line: taken off the line once.   unit: taken off each item, "
+                  "so 1,000 on a line of five is 5,000.\n"
+                  "A value ending in % ignores this -- a percentage of the line "
+                  "is the same number either way."}),
+        ("line_amounts.tax_scope", "A tax amount typed on a line is", "choice",
+         {"values": list(config.LINE_AMOUNT_SCOPES),
+          "help": "The same choice for tax. Enter a percentage instead (5%) and "
+                  "it applies to the whole line."}),
+        ("totals.always_show_breakdown", "Always print the Subtotal breakdown",
+         "bool",
+         {"help": "Off: the Subtotal / Discounts / Taxes rows appear only when "
+                  "there is something besides the items to show."}),
         ("tax.mode", "Tax mode", "choice",
          {"values": list(config.TAX_MODES),
           "help": "exclusive: added to the subtotal.   "

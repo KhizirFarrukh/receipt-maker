@@ -1603,6 +1603,23 @@ class ReceiptApp:
                 return None, f"{label} must be a whole number."
 
         if field_type in ("amount", "number"):
+            # A discount or tax may be a percentage of the line instead of a
+            # sum of money. It is kept as typed ("10%") rather than converted
+            # here, because the conversion needs the line's quantity and price
+            # and belongs in one place -- line_amounts.py -- not in the form.
+            if field["key"] in ("discount", "tax") and text.endswith("%"):
+                try:
+                    percent = float(text[:-1].strip())
+                except ValueError:
+                    return None, (f"{label}: {text!r} is not a percentage. "
+                                  f"Write it like 10%, or enter an amount.")
+                if percent < 0:
+                    return None, f"{label} cannot be negative."
+                if percent > 100 and field["key"] == "discount":
+                    return None, (f"{label}: {percent:g}% is more than the whole "
+                                  f"line. Check the figure.")
+                return f"{percent:g}%", None
+
             try:
                 number = float(text)
             except ValueError:

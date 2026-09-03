@@ -26,6 +26,7 @@ A Python tkinter desktop app for generating A4 PDF sales receipts.
 - The receipt body is laid out inside the reserved PDF content area, so it does not overlap the header or footer.
 - The whole receipt layout lives in editable templates under `Templates/` — edit the HTML/CSS and the next receipt changes, with no rebuild. See [Templates](#templates).
 - Amounts are computed in decimal (never binary floating point), with each line rounded and the rounded lines summed, so the printed figures add up.
+- **A line's discount and tax can be read per line or per item**, or written as a percentage (`10%`) of the line. A discount of 1,000 on a line of five is either 1,000 or 5,000 — both are things shops do, so it is a setting rather than a guess.
 - A product catalogue with variants, stock, and CSV import/export. Scan a barcode to add a line; scan it again to add one more.
 - **One serial number per item sold**, not one per line — a line of quantity 3 collects three, and selling takes those exact serials off the shelf.
 - **Save a draft** of an unfinished sale. It uses no invoice number, because a draft is not a receipt.
@@ -387,6 +388,13 @@ Edit `appsettings.json` to change the business details shown in the receipt head
   has a `label`, a `kind` (`"tax"` for a government levy you remit, `"fee"` for a processor's
   service charge — they are reported separately and must not be swapped), and a `percent` and/or
   `fixed` amount.
+- `line_amounts` — `discount_scope` and `tax_scope`, each `"line"` or `"unit"`. `"line"` takes the
+  typed amount off the line once; `"unit"` takes it off every item, so 1,000 on a line of five is
+  5,000. **`"line"` is the default because it is what the app already did** — a reissued receipt
+  has to reproduce the figures the customer was given. A value ending in `%` ignores this setting
+  entirely: a percentage of the line is the same number read either way.
+- `totals` — `always_show_breakdown`. Off, the Subtotal / Taxes / Discounts rows appear only when
+  there is something besides the line items to show; on, they print on every receipt.
 - `inventory` — `track_stock`, and `low_stock_threshold` (0 warns when something runs out; 3 warns
   while there is still time to reorder).
 - `signature_image` — a scanned handwritten signature at the foot of the receipt. **Decorative

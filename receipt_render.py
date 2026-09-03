@@ -38,6 +38,7 @@ import re
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
 import config
+import line_amounts
 import line_units
 import shipments
 from money import AMOUNT_DECIMALS, to_decimal, quantize
@@ -395,7 +396,21 @@ def line_gross(item):
     return to_decimal(item.get("qty", 0)) * to_decimal(item.get("price", 0))
 
 
-def line_total(item, decimals=None):
+def line_discount(item, decimals=None, scopes=None):
+    """What this line's discount comes to.
+
+    A plain amount is read per line or per unit according to the setting; a
+    value ending in `%` is that percentage of the line. See line_amounts.py.
+    """
+    return line_amounts.discount_of(item, line_gross(item), scopes, decimals)
+
+
+def line_tax(item, decimals=None, scopes=None):
+    """What this line's tax comes to, read the same way as the discount."""
+    return line_amounts.tax_of(item, line_gross(item), scopes, decimals)
+
+
+def line_total(item, decimals=None, scopes=None):
     """What one line actually came to: gross, plus its tax, less its discount.
 
     Each part is rounded *before* they are added, which is not fussiness -- the
@@ -409,8 +424,8 @@ def line_total(item, decimals=None):
     lines at once, so charging it to a line would mean inventing a split.
     """
     return (quantize(line_gross(item), decimals)
-            + quantize(item.get("tax", 0), decimals)
-            - quantize(item.get("discount", 0), decimals))
+            + line_tax(item, decimals, scopes)
+            - line_discount(item, decimals, scopes))
 
 
 def group_digits(digits, style="thousand"):
@@ -499,7 +514,7 @@ TYPE_PRESENTATION = {
 #: because redefining `amount` would silently change the figure printed on every
 #: receipt already being issued; a shop that wants only the net turns `amount`
 #: off and `line_total` on. See TODO.md section 6.4.
-DERIVED_KEYS = {"amount", "line_total"}
+DERIVED_KEYS = {"amount", "line_total", "line_discount", "line_tax"}
 
 #: Fallback for "this line carries no warranty, print no note". The real value
 #: comes from fields.json (`warranty.none_option`) so a shop that words it
@@ -613,6 +628,9 @@ def build_html(inv_no, date_str, cust, phone, email, items, receipt_type="Online
         keep_rows_whole=settings.get("render", {}).get("keep_rows_whole", True),
         show_installments=settings.get("installments", {}).get("enabled", False),
         payment_config=settings,
+        amount_scopes=settings.get("line_amounts"),
+        always_show_breakdown=settings.get("totals", {}).get(
+            "always_show_breakdown", False),
         show_shipping=settings.get("shipping", {}).get("enabled", True),
         signature_image=settings.get("signature_image"),
     )
@@ -622,7 +640,8 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
                    currency=None, terms=True, tax_config=None, fields=None,
                    keep_rows_whole=True, show_installments=False,
                    payment_config=None, show_shipping=True,
-                   signature_image=None):
+                   signature_image=None, amount_scopes=None,
+                   always_show_breakdown=False):
     """Pure render: (data, templates, strings, currency) -> html.
 
     No clock, no IO, no globals. Everything non-deterministic (the resource base
@@ -642,7 +661,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     none_warranty = fields.get("warranty", {}).get("none_option", NO_WARRANTY_LABEL)
 
     # --- line items -----------------------------------------------------
-    columns = visible_columns(fields, items, decimals)
+    columns = visible_columns(fields, items, decimals, amount_scopes)
 
     header_cells = "".join(
         _block(templates, "item_header_cell.html", {
@@ -666,7 +685,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
             _block(templates, "item_row_cell.html",
                    _cell_context(item, field, empty_cell, currency, group_lines,
                                  strings, none_warranty, show_installments,
-                                 shipment_markers))
+                                 shipment_markers, amount_scopes))
             for field in columns
         )
         rows.append(f"<tr>{cells}</tr>")
@@ -674,8 +693,10 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     # --- totals ---------------------------------------------------------
     # Sum the *rounded* line values so the printed figures add up on the page.
     subtotal = sum((quantize(line_gross(i), decimals) for i in items), Decimal("0"))
-    total_discount = sum((quantize(i.get("discount", 0), decimals) for i in items), Decimal("0"))
-    total_tax = sum((quantize(i.get("tax", 0), decimals) for i in items), Decimal("0"))
+    total_discount = sum((line_discount(i, decimals, amount_scopes) for i in items),
+                         Decimal("0"))
+    total_tax = sum((line_tax(i, decimals, amount_scopes) for i in items),
+                    Decimal("0"))
     # Shipping is charged per shipment when the lines are grouped, and as the
     # single flat fee it has always been when they are not.
     shipment_rows, ship = shipments.rows(
@@ -705,7 +726,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     # to show; otherwise TOTAL alone says everything.
     totals_rows = ""
     if (total_tax or total_discount or ship or doc_tax_rows or shipment_rows
-            or payment_row):
+            or payment_row or always_show_breakdown):
         breakdown = [(totals_labels.get("subtotal", "Subtotal"),
                       format_amount(subtotal, currency))]
         if total_tax:
@@ -997,7 +1018,7 @@ def _css_class(field):
     return base
 
 
-def visible_columns(fields, items, decimals):
+def visible_columns(fields, items, decimals, scopes=None):
     """The line-item columns this receipt actually shows, in configured order.
 
     A disabled field is never shown. An `optional_column` is shown only when at
@@ -1016,6 +1037,12 @@ def visible_columns(fields, items, decimals):
                 # quantize() would read every serial as 0 and hide the column.
                 used = any(line_units.to_text(line_units.values_for(item, key))
                            for item in items)
+            elif key in ("discount", "tax"):
+                # These may be written as a percentage ("5%"), which quantize()
+                # reads as zero -- so a percentage tax used to hide the very
+                # column it was written in. Ask for the resolved figure.
+                resolve = line_discount if key == "discount" else line_tax
+                used = any(resolve(item, decimals, scopes) for item in items)
             else:
                 used = any(quantize(item.get(key, 0), decimals) for item in items)
             if not used:
@@ -1026,7 +1053,7 @@ def visible_columns(fields, items, decimals):
 
 def _cell_context(item, field, empty_cell="-", currency=None, group=True,
                   strings=None, none_warranty=NO_WARRANTY_LABEL,
-                  show_installments=False, shipment_markers=None):
+                  show_installments=False, shipment_markers=None, scopes=None):
     """Precompute one cell's finished strings -- templates make no decisions."""
     currency = currency or {}
     strings = strings or {}
@@ -1035,7 +1062,11 @@ def _cell_context(item, field, empty_cell="-", currency=None, group=True,
     style = TYPE_PRESENTATION.get(field.get("type", "text"), ("", "plain"))[1]
 
     if key == "line_total":
-        raw = line_total(item, decimals)
+        raw = line_total(item, decimals, scopes)
+    elif key == "line_discount":
+        raw = line_discount(item, decimals, scopes)
+    elif key == "line_tax":
+        raw = line_tax(item, decimals, scopes)
     elif key in DERIVED_KEYS:
         raw = line_gross(item)
     elif field.get(line_units.PER_UNIT_FLAG):
@@ -1048,11 +1079,21 @@ def _cell_context(item, field, empty_cell="-", currency=None, group=True,
         raw = item.get(key, "")
 
     if style == "money":
-        rounded = quantize(raw, decimals)
-        # An optional money column prints a marker rather than a bare zero, so an
-        # unused per-line discount does not read as "discounted by nothing".
-        value = (format_amount(rounded, currency, group)
-                 if rounded or not field.get("optional_column") else empty_cell)
+        # A discount or tax may have been written as a percentage. Print it as
+        # typed: formatting "5%" as money gives "0.00", which reads as no tax
+        # at all on a line that is being taxed. What it came to is the
+        # `line_tax` / `line_discount` column's job.
+        kind, number = line_amounts.parse(raw) if key in ("discount", "tax") \
+            else (line_amounts.AMOUNT, None)
+        if kind == line_amounts.PERCENT:
+            value = f"{number.normalize():f}%" if number else empty_cell
+        else:
+            rounded = quantize(raw, decimals)
+            # An optional money column prints a marker rather than a bare zero,
+            # so an unused per-line discount does not read as "discounted by
+            # nothing".
+            value = (format_amount(rounded, currency, group)
+                     if rounded or not field.get("optional_column") else empty_cell)
     elif style == "boolean":
         yes_no = strings.get("boolean", {})
         value = yes_no.get("yes", "Yes") if raw else yes_no.get("no", "No")
