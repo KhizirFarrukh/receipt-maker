@@ -23,9 +23,9 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import receipt_render      # noqa: E402
-import receipt_service     # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
+from receiptmaker.output import receipt_service     # noqa: E402
 
 import gate_env            # noqa: E402
 
@@ -245,7 +245,7 @@ class TheTermsPageIsSelectable(Stage8TestCase):
 
     def test_a_missing_file_is_reported_by_name(self):
         config.update_app_settings({"terms_page": {"template": "terms.gone.html"}})
-        from template_engine import TemplateError
+        from receiptmaker.core.template_engine import TemplateError
         with self.assertRaises(TemplateError) as ctx:
             self.render()
         self.assertIn("terms.gone.html", str(ctx.exception))

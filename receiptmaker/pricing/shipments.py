@@ -24,7 +24,7 @@ change rather than a migration.
 """
 from decimal import Decimal
 
-from money import quantize, to_decimal
+from receiptmaker.core.money import quantize, to_decimal
 
 #: The line's group tag, and where the fee table lives on the receipt.
 GROUP_KEY = "shipment"

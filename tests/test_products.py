@@ -21,8 +21,8 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import product_catalogue as pc   # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.storage import product_catalogue as pc   # noqa: E402
 
 KEYBOARD = {
     "sku": "KB-87", "barcode": "5012345678900", "name": "Mechanical Keyboard",

@@ -21,7 +21,7 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import receipt_signing  # noqa: E402
+from receiptmaker.output import receipt_signing  # noqa: E402
 
 
 def blank_pdf(path):

@@ -26,16 +26,16 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config             # noqa: E402
-import invoice_counter    # noqa: E402
-import receipt_service    # noqa: E402
+from receiptmaker.core import config             # noqa: E402
+from receiptmaker.storage import invoice_counter    # noqa: E402
+from receiptmaker.output import receipt_service    # noqa: E402
 
 
 def _reserve_in_child(app_dir, code, count, queue):
     """Run in a separate *process* to make the cross-process lock real."""
     sys.path.insert(0, PROJ)
-    import config as child_config
-    import invoice_counter as child_counter
+    from receiptmaker.core import config as child_config
+    from receiptmaker.storage import invoice_counter as child_counter
 
     child_config.set_app_dir(app_dir)
     got = []

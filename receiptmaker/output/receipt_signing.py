@@ -27,7 +27,12 @@ for _logger_name in ("pyhanko", "pyhanko_certvalidator"):
     logging.getLogger(_logger_name).setLevel(logging.CRITICAL)
 
 # ------------------- paths -------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Three levels up from receiptmaker/output/receipt_signing.py is the project
+# root, which is where signing/ sits unfrozen. This module deliberately does not
+# import config -- it has to stay usable on its own, by verify_receipt.py and by
+# anyone reimplementing verification -- so it works the root out for itself.
+BASE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else BASE_DIR
 SIGNING_DIR = os.path.join(APP_DIR, "signing")
 DEFAULT_KEY_PATH = os.path.join(SIGNING_DIR, "private_key.pem")

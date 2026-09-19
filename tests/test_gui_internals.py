@@ -17,13 +17,13 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
+from receiptmaker.core import config              # noqa: E402
 import tk_support          # noqa: E402
-import invoice_counter     # noqa: E402
-import main                # noqa: E402
-import product_catalogue   # noqa: E402
-import receipt_history     # noqa: E402
-import receipt_signing     # noqa: E402
+from receiptmaker.storage import invoice_counter     # noqa: E402
+from receiptmaker.ui import main_window                # noqa: E402
+from receiptmaker.storage import product_catalogue   # noqa: E402
+from receiptmaker.storage import receipt_history     # noqa: E402
+from receiptmaker.output import receipt_signing     # noqa: E402
 
 
 class AppTestCase(unittest.TestCase):
@@ -34,7 +34,7 @@ class AppTestCase(unittest.TestCase):
                     os.path.join(self.dir, "appsettings.json"))
         os.makedirs(os.path.join(self.dir, "invoices"), exist_ok=True)
         config.set_app_dir(self.dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
         self.root = tk.Tk()
         self.root.withdraw()
@@ -42,12 +42,12 @@ class AppTestCase(unittest.TestCase):
     def tearDown(self):
         tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def app(self):
-        instance = main.ReceiptApp(self.root)
+        instance = main_window.ReceiptApp(self.root)
         self.addCleanup(instance.__dict__.clear)
         return instance
 
@@ -57,7 +57,7 @@ class ErrorDialog(AppTestCase):
 
     def build(self, detail=None):
         self.root.wait_window = lambda *a, **k: None
-        main.show_error(self.root, "It went wrong", "A plain summary", detail)
+        main_window.show_error(self.root, "It went wrong", "A plain summary", detail)
         return [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)][-1]
 
     def test_a_summary_only_dialog_builds(self):
@@ -109,13 +109,13 @@ class ErrorDialog(AppTestCase):
 class RememberDialog(AppTestCase):
     def test_it_builds_and_answers_no_when_closed(self):
         self.root.wait_window = lambda *a, **k: None
-        answer, remember = main.ask_with_memory(self.root, "Q", "Open the folder?")
+        answer, remember = main_window.ask_with_memory(self.root, "Q", "Open the folder?")
         self.assertFalse(answer)
         self.assertFalse(remember)
 
     def test_the_yes_and_no_buttons_are_present(self):
         self.root.wait_window = lambda *a, **k: None
-        main.ask_with_memory(self.root, "Q", "Open the folder?")
+        main_window.ask_with_memory(self.root, "Q", "Open the folder?")
         dialog = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)][-1]
         labels = []
         for frame in dialog.winfo_children():
@@ -133,7 +133,7 @@ class RememberDialog(AppTestCase):
 
 class WindowSetup(AppTestCase):
     def test_dpi_awareness_never_raises(self):
-        main.ReceiptApp.enable_dpi_awareness()
+        main_window.ReceiptApp.enable_dpi_awareness()
 
     def test_scaling_falls_back_when_the_display_will_not_say(self):
         app = self.app()
@@ -148,7 +148,7 @@ class WindowSetup(AppTestCase):
         self.assertGreaterEqual(app.ui_scale, 1.0)
 
     def test_column_layout_by_type(self):
-        layout = main.ReceiptApp._column_layout
+        layout = main_window.ReceiptApp._column_layout
         self.assertEqual(layout({"type": "amount"})["anchor"], tk.E)
         self.assertEqual(layout({"type": "integer"})["anchor"], tk.CENTER)
         self.assertEqual(layout({"type": "boolean"})["anchor"], tk.CENTER)
@@ -159,7 +159,7 @@ class WindowSetup(AppTestCase):
 class OpenFolder(AppTestCase):
     def test_it_swallows_a_failure_rather_than_crashing(self):
         """Opening a folder is a convenience; failing it must not raise."""
-        main.ReceiptApp._open_folder(os.path.join(self.dir, "no-such-folder"))
+        main_window.ReceiptApp._open_folder(os.path.join(self.dir, "no-such-folder"))
 
     def test_it_opens_a_real_folder(self):
         calls = []
@@ -167,7 +167,7 @@ class OpenFolder(AppTestCase):
         try:
             if real:
                 os.startfile = lambda path: calls.append(path)
-            main.ReceiptApp._open_folder(self.dir)
+            main_window.ReceiptApp._open_folder(self.dir)
         finally:
             if real:
                 os.startfile = real
@@ -205,7 +205,7 @@ class FillFromProduct(AppTestCase):
              "list_price": "8500.00"}]})
 
     def test_picking_nothing_changes_nothing(self):
-        import settings_ui
+        from receiptmaker.ui import settings_ui
         app = self.app()
         original = settings_ui.pick_product
         try:
@@ -217,7 +217,7 @@ class FillFromProduct(AppTestCase):
             settings_ui.pick_product = original
 
     def test_picking_a_product_fills_the_fields(self):
-        import settings_ui
+        from receiptmaker.ui import settings_ui
         self.seed()
         app = self.app()
         original = settings_ui.pick_product
@@ -240,7 +240,7 @@ class MenuHandlers(AppTestCase):
 
     def setUp(self):
         super().setUp()
-        import settings_ui
+        from receiptmaker.ui import settings_ui
         self.opened = []
         self._saved = (settings_ui.open_settings, settings_ui.open_fields,
                        settings_ui.open_signing_keys, settings_ui.open_history,
@@ -252,7 +252,7 @@ class MenuHandlers(AppTestCase):
         settings_ui.open_products = lambda p, on_saved=None: self.opened.append("products")
 
     def tearDown(self):
-        import settings_ui
+        from receiptmaker.ui import settings_ui
         (settings_ui.open_settings, settings_ui.open_fields,
          settings_ui.open_signing_keys, settings_ui.open_history,
          settings_ui.open_products) = self._saved

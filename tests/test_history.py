@@ -20,8 +20,8 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config            # noqa: E402
-import receipt_history   # noqa: E402
+from receiptmaker.core import config            # noqa: E402
+from receiptmaker.storage import receipt_history   # noqa: E402
 
 DATA = {
     "inv_no": "INV-W1001", "date_str": "26 Aug 2026", "cust": "Ada Lovelace",
@@ -141,9 +141,9 @@ class ReloadingIntoTheForm(HistoryTestCase):
 
     def test_loading_restores_the_original_number_and_consumes_none(self):
         """Correcting a receipt reissues that receipt; it is not a new sale."""
-        import invoice_counter
+        from receiptmaker.storage import invoice_counter
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
 
         receipt_history.record(DATA, "", True)
         before = invoice_counter.peek("W")
@@ -151,7 +151,7 @@ class ReloadingIntoTheForm(HistoryTestCase):
         root = tk.Tk()
         root.withdraw()
         try:
-            app = main.ReceiptApp(root)
+            app = main_window.ReceiptApp(root)
             app.load_from_history(receipt_history.entries()[0])
             loaded_number = app.inv_no.get()
             items = len(app.items_tree.get_children())
@@ -167,13 +167,13 @@ class ReloadingIntoTheForm(HistoryTestCase):
 
     def test_loading_replaces_rather_than_appends_items(self):
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
 
         receipt_history.record(DATA, "", True)
         root = tk.Tk()
         root.withdraw()
         try:
-            app = main.ReceiptApp(root)
+            app = main_window.ReceiptApp(root)
             app.load_from_history(receipt_history.entries()[0])
             app.load_from_history(receipt_history.entries()[0])
             self.assertEqual(len(app.items_tree.get_children()), 1,

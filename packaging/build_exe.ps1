@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# This script lives in packaging/; everything below is relative to the root.
+$ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $ProjectRoot
 
 function Invoke-Native {
@@ -17,7 +18,7 @@ function Invoke-Native {
     }
 }
 
-Invoke-Native { python -m pip install -r requirements-build.txt } "Installing build requirements"
+Invoke-Native { python -m pip install -r packagingequirements-build.txt } "Installing build requirements"
 
 $PlaywrightBrowserRoot = Join-Path $env:LOCALAPPDATA "ms-playwright"
 $HasChromium = (Test-Path -LiteralPath $PlaywrightBrowserRoot) -and
@@ -29,7 +30,7 @@ if ($HasChromium) {
     Invoke-Native { python -m playwright install chromium } "Installing Playwright Chromium"
 }
 
-Invoke-Native { python -m PyInstaller --clean --noconfirm receipt_maker.spec } "Building executable"
+Invoke-Native { python -m PyInstaller --clean --noconfirm packagingeceipt_maker.spec } "Building executable"
 
 $DistDir = Join-Path $ProjectRoot "dist\ReceiptGenerator"
 # Templates are NOT copied here on purpose. The app seeds DistDir\Templates from

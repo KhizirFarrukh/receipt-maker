@@ -20,12 +20,12 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import cli               # noqa: E402
-import config            # noqa: E402
-import keygen            # noqa: E402
-import receipt_render    # noqa: E402
-import receipt_signing   # noqa: E402
-import verify_receipt    # noqa: E402
+from receiptmaker.tools import cli               # noqa: E402
+from receiptmaker.core import config            # noqa: E402
+from receiptmaker.tools import keygen            # noqa: E402
+from receiptmaker.output import receipt_render    # noqa: E402
+from receiptmaker.output import receipt_signing   # noqa: E402
+from receiptmaker.tools import verify_receipt    # noqa: E402
 
 FIXTURES = os.path.join(PROJ, "tests", "fixtures")
 GOLDEN_INPUT = os.path.join(FIXTURES, "golden_input.json")
@@ -47,12 +47,12 @@ class CliTestCase(unittest.TestCase):
         shutil.copy(os.path.join(PROJ, "appsettings.example.json"),
                     os.path.join(self.dir, "appsettings.json"))
         config.set_app_dir(self.dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
 
     def tearDown(self):
         config.set_app_dir(self._app_dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
         shutil.rmtree(self.dir, ignore_errors=True)
 
@@ -246,7 +246,7 @@ class Keygen(CliTestCase):
     """keygen writes where the *app* looks, which is configuration, not a default."""
 
     def paths(self):
-        import receipt_service
+        from receiptmaker.output import receipt_service
         return receipt_service.signing_key_paths()
 
     def test_it_creates_a_usable_key_pair(self):

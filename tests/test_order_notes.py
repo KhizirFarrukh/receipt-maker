@@ -23,9 +23,9 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import main                # noqa: E402
-import receipt_render      # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.ui import main_window                # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
 import tk_support          # noqa: E402
@@ -60,7 +60,7 @@ class FormTestCase(unittest.TestCase):
 
         self.root = tk.Tk()
         self.root.withdraw()
-        self.app = main.ReceiptApp(self.root)
+        self.app = main_window.ReceiptApp(self.root)
 
     def tearDown(self):
         tk_support.destroy(self)
@@ -130,7 +130,7 @@ class OtherFieldTypesWork(FormTestCase):
         fields["receipt_fields"].append(
             {"key": "hidden", "label": "Hidden", "type": "text", "enabled": False})
         config.save_fields(fields)
-        app = main.ReceiptApp(tk.Toplevel(self.root))
+        app = main_window.ReceiptApp(tk.Toplevel(self.root))
         self.assertNotIn("hidden", app.receipt_field_vars)
 
 

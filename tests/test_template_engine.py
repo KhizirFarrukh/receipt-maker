@@ -17,7 +17,7 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import template_engine as te  # noqa: E402
+from receiptmaker.core import template_engine as te  # noqa: E402
 
 
 class Escaping(unittest.TestCase):

@@ -26,9 +26,9 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import installments        # noqa: E402
-import receipt_render      # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.pricing import installments        # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
 import tk_support          # noqa: E402
@@ -332,7 +332,7 @@ class TheFormCarriesPlans(unittest.TestCase):
 
     def setUp(self):
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
         self._app_dir = config.APP_DIR
         self.dir = tempfile.mkdtemp(prefix="rm-inst-ui-")
         shutil.copy(os.path.join(gate_env.GATE_ENV, "appsettings.json"),
@@ -343,7 +343,7 @@ class TheFormCarriesPlans(unittest.TestCase):
         receipt_render.clear_template_cache()
         self.root = tk.Tk()
         self.root.withdraw()
-        self.app = main.ReceiptApp(self.root)
+        self.app = main_window.ReceiptApp(self.root)
 
     def tearDown(self):
         tk_support.destroy(self)
@@ -379,7 +379,7 @@ class TheFormCarriesPlans(unittest.TestCase):
 
     def test_an_order_plan_is_refused_while_lines_have_their_own(self):
         infos = []
-        import main as main_module
+        from receiptmaker.ui import main_window as main_module
         original = main_module.messagebox.showinfo
         main_module.messagebox.showinfo = lambda t, m, **k: infos.append(m)
         try:

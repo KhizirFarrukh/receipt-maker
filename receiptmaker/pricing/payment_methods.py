@@ -25,7 +25,7 @@ to serve one case, so it hangs off the receipt.
 """
 from decimal import Decimal
 
-from money import quantize, to_decimal
+from receiptmaker.core.money import quantize, to_decimal
 
 #: Where the chosen method's label sits on the receipt data.
 METHOD_KEY = "payment_method"

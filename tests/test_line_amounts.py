@@ -23,9 +23,9 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import line_amounts        # noqa: E402
-import receipt_render      # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.pricing import line_amounts        # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
 
@@ -322,13 +322,13 @@ class TheFormAcceptsAPercentage(unittest.TestCase):
 
     def clean(self, key, text):
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
         import tk_support
 
         self.root = tk.Tk()
         self.root.withdraw()
         try:
-            app = main.ReceiptApp(self.root)
+            app = main_window.ReceiptApp(self.root)
             self.app = app
             field = {"key": key, "label": key.title(), "type": "amount"}
             return app.clean_field_value(field, text)

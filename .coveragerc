@@ -1,12 +1,14 @@
 [run]
 branch = True
-source = .
+# The package is the code. The four .py files at the root are launchers that do
+# nothing but delegate into it; tests/test_layout.py proves they still resolve,
+# which is the only thing about them that can break.
+source =
+    receiptmaker
 omit =
     tests/*
     build/*
     dist/*
-    receipt_maker.spec
-    .coveragerc
 
 [report]
 # Show which lines are missed, and fail the run below the agreed floor.

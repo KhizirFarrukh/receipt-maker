@@ -20,7 +20,7 @@ import json
 import logging
 import os
 
-import config
+from receiptmaker.core import config
 
 logger = logging.getLogger("receipt_maker")
 

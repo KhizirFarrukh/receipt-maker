@@ -21,7 +21,7 @@ import logging
 import os
 from decimal import Decimal, InvalidOperation
 
-import config
+from receiptmaker.core import config
 
 logger = logging.getLogger("receipt_maker")
 
@@ -53,7 +53,7 @@ def catalogue_path():
 # here is the same rounding the renderer and the totals use. This module kept
 # its own copy of to_decimal until money.py was extracted; two implementations
 # of "read a number the user typed" is one too many on a document about money.
-from money import to_decimal, quantize          # noqa: E402,F401
+from receiptmaker.core.money import to_decimal, quantize          # noqa: E402,F401
 
 
 def price_from_markup(cost, percent):

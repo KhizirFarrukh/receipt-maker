@@ -21,12 +21,12 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config             # noqa: E402
+from receiptmaker.core import config             # noqa: E402
 import tk_support          # noqa: E402
-import invoice_counter    # noqa: E402
-import main               # noqa: E402
-import receipt_service    # noqa: E402
-import receipt_signing    # noqa: E402
+from receiptmaker.storage import invoice_counter    # noqa: E402
+from receiptmaker.ui import main_window               # noqa: E402
+from receiptmaker.output import receipt_service    # noqa: E402
+from receiptmaker.output import receipt_signing    # noqa: E402
 
 
 class MainTestCase(unittest.TestCase):
@@ -37,43 +37,43 @@ class MainTestCase(unittest.TestCase):
                     os.path.join(self.dir, "appsettings.json"))
         os.makedirs(os.path.join(self.dir, "invoices"), exist_ok=True)
         config.set_app_dir(self.dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
 
         self.errors, self.infos, self.warnings = [], [], []
         self.asked, self.shown = [], []
         self._saved = (
-            main.messagebox.showerror, main.messagebox.showinfo,
-            main.messagebox.showwarning, main.messagebox.askyesno,
-            main.messagebox.askyesnocancel, main.ask_with_memory,
-            main.show_error, main.filedialog.askopenfilename,
-            main.filedialog.askopenfilenames, receipt_service.generate,
+            main_window.messagebox.showerror, main_window.messagebox.showinfo,
+            main_window.messagebox.showwarning, main_window.messagebox.askyesno,
+            main_window.messagebox.askyesnocancel, main_window.ask_with_memory,
+            main_window.show_error, main_window.filedialog.askopenfilename,
+            main_window.filedialog.askopenfilenames, receipt_service.generate,
         )
-        main.messagebox.showerror = lambda t, m, **k: self.errors.append(m)
-        main.messagebox.showinfo = lambda t, m, **k: self.infos.append(m)
-        main.messagebox.showwarning = lambda t, m, **k: self.warnings.append(m)
-        main.messagebox.askyesno = lambda *a, **k: True
-        main.messagebox.askyesnocancel = lambda *a, **k: True
-        main.ask_with_memory = lambda *a, **k: (False, False)
-        main.show_error = lambda parent, title, summary, detail=None: self.shown.append(
+        main_window.messagebox.showerror = lambda t, m, **k: self.errors.append(m)
+        main_window.messagebox.showinfo = lambda t, m, **k: self.infos.append(m)
+        main_window.messagebox.showwarning = lambda t, m, **k: self.warnings.append(m)
+        main_window.messagebox.askyesno = lambda *a, **k: True
+        main_window.messagebox.askyesnocancel = lambda *a, **k: True
+        main_window.ask_with_memory = lambda *a, **k: (False, False)
+        main_window.show_error = lambda parent, title, summary, detail=None: self.shown.append(
             (title, summary))
-        main.filedialog.askopenfilename = lambda **k: ""
-        main.filedialog.askopenfilenames = lambda **k: ()
+        main_window.filedialog.askopenfilename = lambda **k: ""
+        main_window.filedialog.askopenfilenames = lambda **k: ()
 
         self.root = tk.Tk()
         self.root.withdraw()
-        self.app = main.ReceiptApp(self.root)
+        self.app = main_window.ReceiptApp(self.root)
 
     def tearDown(self):
-        (main.messagebox.showerror, main.messagebox.showinfo,
-         main.messagebox.showwarning, main.messagebox.askyesno,
-         main.messagebox.askyesnocancel, main.ask_with_memory,
-         main.show_error, main.filedialog.askopenfilename,
-         main.filedialog.askopenfilenames, receipt_service.generate) = self._saved
+        (main_window.messagebox.showerror, main_window.messagebox.showinfo,
+         main_window.messagebox.showwarning, main_window.messagebox.askyesno,
+         main_window.messagebox.askyesnocancel, main_window.ask_with_memory,
+         main_window.show_error, main_window.filedialog.askopenfilename,
+         main_window.filedialog.askopenfilenames, receipt_service.generate) = self._saved
         self.app.__dict__.clear()
         tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
         shutil.rmtree(self.dir, ignore_errors=True)
 
@@ -120,7 +120,7 @@ class FormBasics(MainTestCase):
         root = tk.Tk()
         root.withdraw()
         self.addCleanup(root.destroy)
-        app = main.ReceiptApp(root)
+        app = main_window.ReceiptApp(root)
         self.addCleanup(app.__dict__.clear)
         return app
 
@@ -402,13 +402,13 @@ class SigningTools(MainTestCase):
         return path
 
     def test_verifying_a_genuine_receipt(self):
-        main.filedialog.askopenfilename = lambda **k: self.signed_pdf()
+        main_window.filedialog.askopenfilename = lambda **k: self.signed_pdf()
         self.app.verify_receipt_dialog()
         self.assertTrue(self.infos, "a genuine receipt should be reported as verified")
         self.assertIn("Verified", self.app.status_label["text"])
 
     def test_verifying_an_unsigned_pdf_warns(self):
-        main.filedialog.askopenfilename = lambda **k: self.blank_pdf("plain.pdf")
+        main_window.filedialog.askopenfilename = lambda **k: self.blank_pdf("plain.pdf")
         self.app.verify_receipt_dialog()
         self.assertTrue(self.warnings)
 
@@ -417,24 +417,24 @@ class SigningTools(MainTestCase):
         raw = bytearray(open(path, "rb").read())
         raw[len(raw) // 2] ^= 0x01
         open(path, "wb").write(bytes(raw))
-        main.filedialog.askopenfilename = lambda **k: path
+        main_window.filedialog.askopenfilename = lambda **k: path
         self.app.verify_receipt_dialog()
         self.assertTrue(self.errors)
 
     def test_cancelling_the_picker_does_nothing(self):
-        main.filedialog.askopenfilename = lambda **k: ""
+        main_window.filedialog.askopenfilename = lambda **k: ""
         self.app.verify_receipt_dialog()
         self.assertFalse(self.infos + self.errors + self.warnings)
 
     def test_verifying_without_a_certificate_explains(self):
         os.remove(self.cert)
-        main.filedialog.askopenfilename = lambda **k: self.blank_pdf("x.pdf")
+        main_window.filedialog.askopenfilename = lambda **k: self.blank_pdf("x.pdf")
         self.app.verify_receipt_dialog()
         self.assertTrue(self.errors)
 
     def test_signing_existing_pdfs(self):
         one = self.blank_pdf("one.pdf")
-        main.filedialog.askopenfilenames = lambda **k: (one,)
+        main_window.filedialog.askopenfilenames = lambda **k: (one,)
         self.app.sign_existing_pdfs_dialog()
         self.assertTrue(self.infos)
         self.assertEqual(receipt_signing.verify_pdf(one, self.cert).status,
@@ -442,13 +442,13 @@ class SigningTools(MainTestCase):
 
     def test_already_signed_files_are_skipped(self):
         signed = self.signed_pdf()
-        main.filedialog.askopenfilenames = lambda **k: (signed,)
+        main_window.filedialog.askopenfilenames = lambda **k: (signed,)
         self.app.sign_existing_pdfs_dialog()
         self.assertIn("skipped", self.app.status_label["text"])
 
     def test_signing_without_a_key_explains(self):
         os.remove(self.key)
-        main.filedialog.askopenfilenames = lambda **k: (self.blank_pdf("x.pdf"),)
+        main_window.filedialog.askopenfilenames = lambda **k: (self.blank_pdf("x.pdf"),)
         self.app.sign_existing_pdfs_dialog()
         self.assertTrue(any("not found" in m for m in self.errors))
 
@@ -456,28 +456,28 @@ class SigningTools(MainTestCase):
         junk = os.path.join(self.dir, "junk.pdf")
         with open(junk, "w", encoding="utf-8") as f:
             f.write("not a pdf")
-        main.filedialog.askopenfilenames = lambda **k: (junk,)
+        main_window.filedialog.askopenfilenames = lambda **k: (junk,)
         self.app.sign_existing_pdfs_dialog()
         self.assertTrue(self.warnings, "failures should be summarised, not raised")
 
     def test_cancelling_the_multi_picker_does_nothing(self):
-        main.filedialog.askopenfilenames = lambda **k: ()
+        main_window.filedialog.askopenfilenames = lambda **k: ()
         self.app.sign_existing_pdfs_dialog()
         self.assertFalse(self.infos + self.warnings)
 
 
 class WarrantyHelpers(MainTestCase):
     def test_an_option_without_a_hash_is_returned_as_is(self):
-        self.assertEqual(main.ReceiptApp.resolve_warranty("No Warranty", ""),
+        self.assertEqual(main_window.ReceiptApp.resolve_warranty("No Warranty", ""),
                          "No Warranty")
 
     def test_a_hash_option_needs_a_positive_number(self):
-        self.assertIsNone(main.ReceiptApp.resolve_warranty("# Months", "0"))
-        self.assertEqual(main.ReceiptApp.resolve_warranty("# Months", "6"), "6 Months")
+        self.assertIsNone(main_window.ReceiptApp.resolve_warranty("# Months", "0"))
+        self.assertEqual(main_window.ReceiptApp.resolve_warranty("# Months", "6"), "6 Months")
 
     def test_matching_recovers_the_number(self):
         self.assertEqual(
-            main.ReceiptApp.match_warranty_option("6 Months", ["# Months", "None"]),
+            main_window.ReceiptApp.match_warranty_option("6 Months", ["# Months", "None"]),
             ("# Months", "6"))
 
 
@@ -490,12 +490,12 @@ class StartupFailures(MainTestCase):
             json.dump(settings, f)
 
         shown = {}
-        original = main.show_error
+        original = main_window.show_error
         try:
-            main.show_error = lambda p, t, s, d=None: shown.update(title=t, summary=s)
-            code = main.launch()
+            main_window.show_error = lambda p, t, s, d=None: shown.update(title=t, summary=s)
+            code = main_window.launch()
         finally:
-            main.show_error = original
+            main_window.show_error = original
 
         self.assertEqual(code, 2)
         self.assertIn("currency.decimals", shown["summary"])
@@ -512,13 +512,13 @@ class StartupFailures(MainTestCase):
             def __init__(self, root):
                 raise RuntimeError("boom")
 
-        original_error, original_app = main.show_error, main.ReceiptApp
+        original_error, original_app = main_window.show_error, main_window.ReceiptApp
         try:
-            main.show_error = lambda p, t, s, d=None: shown.update(title=t)
-            main.ReceiptApp = Exploding
-            code = main.launch()
+            main_window.show_error = lambda p, t, s, d=None: shown.update(title=t)
+            main_window.ReceiptApp = Exploding
+            code = main_window.launch()
         finally:
-            main.show_error, main.ReceiptApp = original_error, original_app
+            main_window.show_error, main_window.ReceiptApp = original_error, original_app
         self.assertEqual(code, 1)
         self.assertEqual(shown["title"], "Cannot start")
 
@@ -535,7 +535,7 @@ class SmokeTestEntryPoint(MainTestCase):
             log.setLevel(logging.CRITICAL)   # the traceback is expected; do not print it
             receipt_service.render_pdf = lambda html, path: (_ for _ in ()).throw(
                 RuntimeError("no chromium"))
-            self.assertEqual(main.run_smoke_test(), 1)
+            self.assertEqual(main_window.run_smoke_test(), 1)
         finally:
             log.setLevel(previous_level)
             receipt_service.render_pdf = original
@@ -544,7 +544,7 @@ class SmokeTestEntryPoint(MainTestCase):
         original = receipt_service.render_pdf
         try:
             receipt_service.render_pdf = lambda html, path: open(path, "wb").write(b"%PDF")
-            self.assertEqual(main.run_smoke_test(), 0)
+            self.assertEqual(main_window.run_smoke_test(), 0)
         finally:
             receipt_service.render_pdf = original
 

@@ -22,12 +22,12 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import drafts              # noqa: E402
-import invoice_counter     # noqa: E402
-import main                # noqa: E402
-import receipt_render      # noqa: E402
-import settings_ui         # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.storage import drafts              # noqa: E402
+from receiptmaker.storage import invoice_counter     # noqa: E402
+from receiptmaker.ui import main_window                # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
+from receiptmaker.ui import settings_ui         # noqa: E402
 
 import gate_env            # noqa: E402
 import tk_support          # noqa: E402
@@ -187,12 +187,12 @@ class FromTheApp(DraftTestCase):
         self.root = tk.Tk()
         self.root.withdraw()
         self.infos = []
-        self._showinfo = main.messagebox.showinfo
-        main.messagebox.showinfo = lambda t, m, **k: self.infos.append(m)
-        self.app = main.ReceiptApp(self.root)
+        self._showinfo = main_window.messagebox.showinfo
+        main_window.messagebox.showinfo = lambda t, m, **k: self.infos.append(m)
+        self.app = main_window.ReceiptApp(self.root)
 
     def tearDown(self):
-        main.messagebox.showinfo = self._showinfo
+        main_window.messagebox.showinfo = self._showinfo
         tk_support.destroy(self)
         receipt_render.clear_template_cache()
         super().tearDown()

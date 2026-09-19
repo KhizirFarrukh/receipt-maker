@@ -3,7 +3,13 @@
 A complete context dump. If the chat history is gone, read this file and the ones it points to and
 you will know what this project is, what state it is in, and what to do next.
 
-**Last updated: 2026-08-28.** Branch `generalization`, in sync with `origin`.
+**Last updated: 2026-09-19.** Branch `generalization`, in sync with `origin`.
+
+> **The layout changed on 2026-09-19.** The modules no longer sit loose at the project root; they
+> live in `receiptmaker/` under `core`, `pricing`, `storage`, `output`, `ui` and `tools`. `main.py`,
+> `cli.py`, `keygen.py` and `verify_receipt.py` are still at the root and still work as documented,
+> but they are now one-line launchers. Anything in these notes written as `import config` means
+> `from receiptmaker.core import config` today. See ARCHITECTURE.md for the full table.
 
 ## Read order
 

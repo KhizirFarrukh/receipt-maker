@@ -25,8 +25,8 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import product_catalogue   # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.storage import product_catalogue   # noqa: E402
 
 import gate_env            # noqa: E402
 
@@ -50,11 +50,11 @@ def receipt_app():
     module happens to run next. See claude_chat/PITFALLS.md.
     """
     import tkinter as tk
-    import main
+    from receiptmaker.ui import main_window
 
     root = tk.Tk()
     root.withdraw()
-    app = main.ReceiptApp(root)
+    app = main_window.ReceiptApp(root)
     try:
         yield app
     finally:
@@ -248,49 +248,49 @@ class ItReachesTheTill(StockTestCase):
 
     def test_generate_passes_the_list_through(self):
         import inspect
-        import receipt_service
+        from receiptmaker.output import receipt_service
         signature = inspect.signature(receipt_service.generate)
         self.assertIn("warnings", signature.parameters)
 
     def test_the_confirmation_carries_it(self):
-        import main
+        from receiptmaker.ui import main_window
 
         asked = {}
-        original = main.ask_with_memory
-        main.ask_with_memory = lambda parent, title, message: (
+        original = main_window.ask_with_memory
+        main_window.ask_with_memory = lambda parent, title, message: (
             asked.update(message=message) or (False, False))
         try:
             with receipt_app() as app:
                 app._on_generated("out.pdf", True, ["KB: only 2 left in stock."])
         finally:
-            main.ask_with_memory = original
+            main_window.ask_with_memory = original
 
         self.assertIn("only 2 left in stock", asked["message"])
 
     def test_the_status_line_carries_it_too(self):
-        import main
+        from receiptmaker.ui import main_window
 
-        original = main.ask_with_memory
-        main.ask_with_memory = lambda *a, **k: (False, False)
+        original = main_window.ask_with_memory
+        main_window.ask_with_memory = lambda *a, **k: (False, False)
         try:
             with receipt_app() as app:
                 app._on_generated("out.pdf", True, ["KB: only 2 left in stock."])
                 self.assertIn("only 2 left", app.status_label.cget("text"))
         finally:
-            main.ask_with_memory = original
+            main_window.ask_with_memory = original
 
     def test_a_clean_sale_says_nothing_extra(self):
-        import main
+        from receiptmaker.ui import main_window
 
         asked = {}
-        original = main.ask_with_memory
-        main.ask_with_memory = lambda parent, title, message: (
+        original = main_window.ask_with_memory
+        main_window.ask_with_memory = lambda parent, title, message: (
             asked.update(message=message) or (False, False))
         try:
             with receipt_app() as app:
                 app._on_generated("out.pdf", True, [])
         finally:
-            main.ask_with_memory = original
+            main_window.ask_with_memory = original
         self.assertNotIn("Stock:", asked["message"])
 
 

@@ -19,7 +19,7 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config  # noqa: E402
+from receiptmaker.core import config  # noqa: E402
 
 
 def valid_settings(**overrides):

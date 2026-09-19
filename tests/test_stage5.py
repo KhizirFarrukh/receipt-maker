@@ -15,8 +15,8 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config             # noqa: E402
-import receipt_render     # noqa: E402
+from receiptmaker.core import config             # noqa: E402
+from receiptmaker.output import receipt_render     # noqa: E402
 import gate_env           # noqa: E402
 
 
@@ -177,14 +177,14 @@ class WarrantyResolution(unittest.TestCase):
     """The '#' prompt must reject exactly what the plan says it rejects."""
 
     def resolve(self, option, number):
-        import main
+        from receiptmaker.ui import main_window
         captured = {}
-        original = main.messagebox.showerror
+        original = main_window.messagebox.showerror
         try:
-            main.messagebox.showerror = lambda *a, **k: captured.setdefault("shown", True)
-            return main.ReceiptApp.resolve_warranty(option, number), captured
+            main_window.messagebox.showerror = lambda *a, **k: captured.setdefault("shown", True)
+            return main_window.ReceiptApp.resolve_warranty(option, number), captured
         finally:
-            main.messagebox.showerror = original
+            main_window.messagebox.showerror = original
 
     def test_accepts_a_positive_number(self):
         got, _ = self.resolve("# Months Limited Warranty", "12")
@@ -219,8 +219,8 @@ class WarrantyRoundTrip(unittest.TestCase):
     OPTIONS = ["# Months Limited Warranty", "7 Days Checking Warranty", "No Warranty"]
 
     def match(self, text):
-        import main
-        return main.ReceiptApp.match_warranty_option(text, self.OPTIONS)
+        from receiptmaker.ui import main_window
+        return main_window.ReceiptApp.match_warranty_option(text, self.OPTIONS)
 
     def test_exact_option_matches(self):
         self.assertEqual(self.match("No Warranty"), ("No Warranty", ""))
@@ -233,9 +233,9 @@ class WarrantyRoundTrip(unittest.TestCase):
         self.assertEqual(self.match("Something else entirely"), ("", ""))
 
     def test_round_trip_through_resolve(self):
-        import main
+        from receiptmaker.ui import main_window
         for number in ("1", "12", "240"):
-            text = main.ReceiptApp.resolve_warranty("# Months Limited Warranty", number)
+            text = main_window.ReceiptApp.resolve_warranty("# Months Limited Warranty", number)
             self.assertEqual(self.match(text), ("# Months Limited Warranty", number))
 
 
@@ -314,8 +314,8 @@ class FieldValueCleaning(unittest.TestCase):
     """Entered values are validated by declared type, custom fields included."""
 
     def clean(self, field, raw):
-        import main
-        return main.ReceiptApp.clean_field_value(main.ReceiptApp, field, raw)
+        from receiptmaker.ui import main_window
+        return main_window.ReceiptApp.clean_field_value(main_window.ReceiptApp, field, raw)
 
     def test_amount_is_normalised_to_two_places(self):
         value, error = self.clean({"key": "p", "label": "P", "type": "amount"}, "2.5")
@@ -369,13 +369,13 @@ class TreeRowRoundTrip(unittest.TestCase):
 
     def build(self, fields):
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
 
         root = tk.Tk()
         root.withdraw()
-        app = main.ReceiptApp(root)
+        app = main_window.ReceiptApp(root)
         app.fields = fields
-        app.input_fields = main.ReceiptApp._entry_fields(app)
+        app.input_fields = main_window.ReceiptApp._entry_fields(app)
         app.warranty_enabled = bool(fields.get("warranty", {}).get("options"))
         return app, root
 
@@ -443,7 +443,7 @@ class CustomFieldReachesGeneration(unittest.TestCase):
 
     def test_custom_value_is_collected_by_generate_pdf(self):
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
 
         fields = config.default_fields()
         fields["line_item_fields"].insert(1, {
@@ -453,9 +453,9 @@ class CustomFieldReachesGeneration(unittest.TestCase):
         root.withdraw()
         captured = {}
         try:
-            app = main.ReceiptApp(root)
+            app = main_window.ReceiptApp(root)
             app.fields = fields
-            app.input_fields = main.ReceiptApp._entry_fields(app)
+            app.input_fields = main_window.ReceiptApp._entry_fields(app)
             app.warranty_enabled = True
             app._run_generation = lambda d, out, reserved=None: captured.update(data=d)
             app._claim_invoice_number = lambda typed: (typed, None)
@@ -601,7 +601,7 @@ class StickyValues(unittest.TestCase):
 
     def test_only_fields_still_marked_sticky_are_returned(self):
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
 
         fields = config.default_fields()
         for field in fields["line_item_fields"]:
@@ -612,9 +612,9 @@ class StickyValues(unittest.TestCase):
         root = tk.Tk()
         root.withdraw()
         try:
-            app = main.ReceiptApp(root)
+            app = main_window.ReceiptApp(root)
             app.fields = fields
-            app.input_fields = main.ReceiptApp._entry_fields(app)
+            app.input_fields = main_window.ReceiptApp._entry_fields(app)
             remembered = app.sticky_values()
         finally:
             root.destroy()
@@ -716,12 +716,12 @@ class ItemDialogBuildsFromFields(unittest.TestCase):
 
     def open_dialog(self, fields):
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
 
         root = tk.Tk()
         root.withdraw()
         try:
-            app = main.ReceiptApp(root)
+            app = main_window.ReceiptApp(root)
             app.fields = fields
             # The dialog is modal; stop it blocking and capture that it built.
             root.wait_window = lambda *a, **k: None

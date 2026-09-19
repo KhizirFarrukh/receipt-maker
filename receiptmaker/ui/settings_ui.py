@@ -21,8 +21,8 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-import config
-import product_catalogue
+from receiptmaker.core import config
+from receiptmaker.storage import product_catalogue
 
 # ---------------------------------------------------------------- form model
 # (dotted path, label, kind, options)
@@ -613,7 +613,7 @@ class SigningKeysDialog:
         self.parent = parent
         self.on_changed = on_changed
 
-        import receipt_service
+        from receiptmaker.output import receipt_service
         self.key_path, self.cert_path = receipt_service.signing_key_paths()
 
         self.win = tk.Toplevel(parent)
@@ -646,7 +646,7 @@ class SigningKeysDialog:
         self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
 
     def refresh(self):
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
 
         if not os.path.isfile(self.key_path):
             self.status.config(
@@ -694,7 +694,7 @@ class SigningKeysDialog:
             parent=self.win)
 
     def create(self):
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
 
         if not self._confirm_replace():
             return
@@ -718,7 +718,7 @@ class SigningKeysDialog:
         self._changed()
 
     def import_key(self):
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
 
         source = filedialog.askopenfilename(
             title="Select the private key or PKCS#12 file", parent=self.win,
@@ -868,7 +868,7 @@ class HistoryDialog:
         self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
 
     def refresh(self):
-        import receipt_history
+        from receiptmaker.storage import receipt_history
 
         currency = config.load_app_settings().get("currency")
         everything = receipt_history.entries()
@@ -915,7 +915,7 @@ class HistoryDialog:
         happened -- editing it elsewhere and pushing it back is the one thing it
         must not allow.
         """
-        import csv_io
+        from receiptmaker.storage import csv_io
 
         path = filedialog.asksaveasfilename(
             parent=self.win, title="Export receipt history",
@@ -940,7 +940,7 @@ class HistoryDialog:
         and moves stock. The invoice number stays used -- a number that has been
         on a receipt in a customer's hands cannot be un-issued.
         """
-        import receipt_history
+        from receiptmaker.storage import receipt_history
 
         entry = self._selected()
         if entry is None:
@@ -998,7 +998,7 @@ class DraftsDialog:
     """
 
     def __init__(self, parent, on_load=None):
-        import drafts
+        from receiptmaker.storage import drafts
 
         self.parent = parent
         self.on_load = on_load
@@ -1042,7 +1042,7 @@ class DraftsDialog:
         self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
 
     def refresh(self):
-        import drafts
+        from receiptmaker.storage import drafts
 
         self.drafts = drafts.load().get("drafts", [])
         for row in self.tree.get_children():
@@ -1072,7 +1072,7 @@ class DraftsDialog:
         self.win.destroy()
 
     def delete(self):
-        import drafts
+        from receiptmaker.storage import drafts
 
         draft = self._selected()
         if draft is None:
@@ -1291,7 +1291,7 @@ class ProductsDialog:
 
     def export_csv(self):
         """Write the catalogue out for a spreadsheet."""
-        import csv_io
+        from receiptmaker.storage import csv_io
 
         path = filedialog.asksaveasfilename(
             parent=self.win, title="Export products",
@@ -1313,7 +1313,7 @@ class ProductsDialog:
 
     def import_csv(self):
         """Read products from a spreadsheet, merging by SKU."""
-        import csv_io
+        from receiptmaker.storage import csv_io
 
         path = filedialog.askopenfilename(
             parent=self.win, title="Import products",

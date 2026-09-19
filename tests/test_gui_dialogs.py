@@ -21,12 +21,12 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
+from receiptmaker.core import config              # noqa: E402
 import tk_support          # noqa: E402
-import product_catalogue   # noqa: E402
-import receipt_history     # noqa: E402
-import receipt_signing     # noqa: E402
-import settings_ui         # noqa: E402
+from receiptmaker.storage import product_catalogue   # noqa: E402
+from receiptmaker.storage import receipt_history     # noqa: E402
+from receiptmaker.output import receipt_signing     # noqa: E402
+from receiptmaker.ui import settings_ui         # noqa: E402
 
 
 class DialogTestCase(unittest.TestCase):
@@ -37,7 +37,7 @@ class DialogTestCase(unittest.TestCase):
                     os.path.join(self.dir, "appsettings.json"))
         os.makedirs(os.path.join(self.dir, "invoices"), exist_ok=True)
         config.set_app_dir(self.dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
 
         self.root = tk.Tk()
@@ -60,7 +60,7 @@ class DialogTestCase(unittest.TestCase):
          settings_ui.filedialog.askopenfilename) = self._saved
         tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
         shutil.rmtree(self.dir, ignore_errors=True)
 
@@ -400,7 +400,8 @@ class SigningKeysDialogBehaviour(DialogTestCase):
 
     def stub_certificate(self, days_left):
         """Report a certificate `days_left` from expiry, without waiting a year."""
-        import receipt_signing, datetime
+        import datetime
+        from receiptmaker.output import receipt_signing
         real = receipt_signing.certificate_info
 
         def fake(path):
@@ -634,7 +635,7 @@ class RecordSubDialog(DialogTestCase):
 
 class ProductsDialogConflicts(DialogTestCase):
     def test_a_concurrent_edit_offers_a_choice(self):
-        import product_catalogue as pc
+        from receiptmaker.storage import product_catalogue as pc
         pc.save({config.SCHEMA_VERSION_KEY: 1, "products": [{"sku": "A", "name": "A"}]})
         dialog = settings_ui.ProductsDialog(self.root)
 
@@ -650,7 +651,7 @@ class ProductsDialogConflicts(DialogTestCase):
         dialog.win.destroy()
 
     def test_accepting_the_overwrite_saves_anyway(self):
-        import product_catalogue as pc
+        from receiptmaker.storage import product_catalogue as pc
         pc.save({config.SCHEMA_VERSION_KEY: 1, "products": [{"sku": "A", "name": "A"}]})
         dialog = settings_ui.ProductsDialog(self.root)
         pc.save({config.SCHEMA_VERSION_KEY: 1, "products": [{"sku": "B", "name": "B"}]})

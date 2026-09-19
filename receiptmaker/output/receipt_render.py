@@ -37,14 +37,14 @@ import os
 import re
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
-import config
-import line_amounts
-import line_units
-import shipments
-from money import AMOUNT_DECIMALS, to_decimal, quantize
-import template_engine
-from template_engine import TemplateError
-from config import (
+from receiptmaker.core import config
+from receiptmaker.pricing import line_amounts
+from receiptmaker.pricing import line_units
+from receiptmaker.pricing import shipments
+from receiptmaker.core.money import AMOUNT_DECIMALS, to_decimal, quantize
+from receiptmaker.core import template_engine
+from receiptmaker.core.template_engine import TemplateError
+from receiptmaker.core.config import (
     RESOURCE_DIR,
     PDF_MARGIN_LEFT,
     PDF_MARGIN_RIGHT,
@@ -718,7 +718,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     # breakdown at all. See payment_methods.py for why tax and fee stay apart.
     payment_row = None
     if payment_config:
-        import payment_methods
+        from receiptmaker.pricing import payment_methods
         payment_row = payment_methods.row(
             payment_config, data.get(payment_methods.METHOD_KEY), total, decimals)
 
@@ -783,7 +783,7 @@ def render_receipt(data, templates, resource_base="", font_faces="", strings=Non
     # arrangement, so the TOTAL stays what the goods cost and the plan is
     # disclosed in full underneath. See installments.py.
     if show_installments:
-        import installments
+        from receiptmaker.pricing import installments
         scope, plan_rows, plan_totals = installments.collect(
             {"items": items, installments.PLAN_KEY: data.get(installments.PLAN_KEY)},
             items, decimals)
@@ -1115,7 +1115,7 @@ def _cell_context(item, field, empty_cell="-", currency=None, group=True,
         if marker:
             note = f"{note} · {marker}" if note else marker
         if show_installments:
-            import installments
+            from receiptmaker.pricing import installments
             plan = installments.describe(
                 item.get(installments.PLAN_KEY),
                 lambda value: format_amount(value, currency, group))

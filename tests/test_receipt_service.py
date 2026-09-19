@@ -21,10 +21,10 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import product_catalogue   # noqa: E402
-import receipt_history     # noqa: E402
-import receipt_service     # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.storage import product_catalogue   # noqa: E402
+from receiptmaker.storage import receipt_history     # noqa: E402
+from receiptmaker.output import receipt_service     # noqa: E402
 
 DATA = {
     "inv_no": "INV-W1001", "date_str": "26 Aug 2026", "cust": "Ada Lovelace",
@@ -42,7 +42,7 @@ class ServiceTestCase(unittest.TestCase):
                     os.path.join(self.dir, "appsettings.json"))
         os.makedirs(os.path.join(self.dir, "invoices"), exist_ok=True)
         config.set_app_dir(self.dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
 
         self.rendered = []
@@ -53,7 +53,7 @@ class ServiceTestCase(unittest.TestCase):
         receipt_service.render_pdf = self._real_render
         receipt_service.sign_receipt_pdf = self._real_sign
         config.set_app_dir(self._app_dir)
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
         shutil.rmtree(self.dir, ignore_errors=True)
 

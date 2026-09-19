@@ -25,7 +25,7 @@ disagree with the totals underneath them by a penny.
 """
 from decimal import Decimal
 
-from money import quantize, to_decimal
+from receiptmaker.core.money import quantize, to_decimal
 
 #: How a plain amount on a line is read.
 PER_LINE = "line"

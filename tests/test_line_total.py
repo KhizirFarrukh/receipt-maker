@@ -26,8 +26,8 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import receipt_render      # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
 

@@ -17,11 +17,11 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import product_catalogue   # noqa: E402
-import receipt_history     # noqa: E402
-import receipt_render      # noqa: E402
-import template_engine     # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.storage import product_catalogue   # noqa: E402
+from receiptmaker.storage import receipt_history     # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
+from receiptmaker.core import template_engine     # noqa: E402
 
 
 class TemplateEngineRemainder(unittest.TestCase):

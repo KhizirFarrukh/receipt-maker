@@ -17,16 +17,24 @@ signing_binaries = []
 # through receipt_service, so name them explicitly rather than trusting the
 # static analysis. A module missed here breaks only the packaged build, which is
 # the hardest place to notice it.
-signing_hiddenimports = ["receipt_signing", "settings_ui", "invoice_counter",
-                         "product_catalogue",
-                         "receipt_history",
-                         # Imported inside functions rather than at module top
-                         # level, which is exactly the shape static analysis is
-                         # least reliable about. Listing them costs nothing and
-                         # the alternative is a packaged build that starts fine
-                         # and dies when somebody opens the drafts list.
-                         "money", "line_units", "installments", "shipments",
-                         "payment_methods", "csv_io", "drafts"]
+signing_hiddenimports = [
+    "receiptmaker.output.receipt_signing",
+    "receiptmaker.ui.settings_ui",
+    "receiptmaker.storage.invoice_counter",
+    "receiptmaker.storage.product_catalogue",
+    "receiptmaker.storage.receipt_history",
+    # Imported inside functions rather than at module top level, which is
+    # exactly the shape static analysis is least reliable about. Listing them
+    # costs nothing and the alternative is a packaged build that starts fine and
+    # dies when somebody opens the drafts list.
+    "receiptmaker.core.money",
+    "receiptmaker.pricing.line_units",
+    "receiptmaker.pricing.installments",
+    "receiptmaker.pricing.shipments",
+    "receiptmaker.pricing.payment_methods",
+    "receiptmaker.storage.csv_io",
+    "receiptmaker.storage.drafts",
+]
 for _pkg in ("pyhanko", "pyhanko_certvalidator", "asn1crypto", "oscrypto",
              "cryptography", "certifi", "tzlocal", "uritools"):
     _d, _b, _h = collect_all(_pkg)
@@ -46,7 +54,12 @@ if not os.path.isdir(playwright_browser_dir):
         "Playwright Chromium is not installed. Run: python -m playwright install chromium"
     )
 
-if not os.path.isdir("Templates"):
+# This spec lives in packaging/, so resolve everything against the project root
+# rather than the current directory -- PyInstaller may be invoked from anywhere.
+PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
+TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "Templates")
+
+if not os.path.isdir(TEMPLATES_DIR):
     raise SystemExit(
         "Templates/ is missing. It holds the receipt layout the app renders from; "
         "restore it from the repository before building."
@@ -56,14 +69,16 @@ datas = [
     # Read-only defaults. config.install_default_templates() copies these next to
     # the executable on first run and records their hashes, so the user gets an
     # editable set and a later upgrade can tell edited files from stale defaults.
-    ("Templates", "Templates"),
+    (TEMPLATES_DIR, "Templates"),
     (playwright_browser_dir, "ms-playwright"),
 ] + playwright_datas + signing_datas
 
 
 a = Analysis(
-    ["main.py"],
-    pathex=[],
+    [os.path.join(PROJECT_ROOT, "main.py")],
+    # main.py imports the `receiptmaker` package, which sits beside it rather
+    # than beside this spec.
+    pathex=[PROJECT_ROOT],
     binaries=playwright_binaries + signing_binaries,
     datas=datas,
     hiddenimports=playwright_hiddenimports + signing_hiddenimports,

@@ -3,39 +3,65 @@
 Companion to [HANDOFF.md](HANDOFF.md). This is what the code *is*; [DECISIONS.md](DECISIONS.md) is
 why it is that way.
 
+## The package layout
+
+The code lives in `receiptmaker/`, grouped by responsibility. The four `.py` files at the project
+root — `main.py`, `cli.py`, `keygen.py`, `verify_receipt.py` — are launchers that do nothing but
+delegate into it. They stay at the root because the README, the PyInstaller spec and the packaged
+`--smoke-test` all name them.
+
+| Package | Holds |
+|---|---|
+| `receiptmaker/core/` | `config`, `money`, `template_engine` |
+| `receiptmaker/pricing/` | `line_amounts`, `line_units`, `installments`, `shipments`, `payment_methods` |
+| `receiptmaker/storage/` | `product_catalogue`, `receipt_history`, `invoice_counter`, `drafts`, `csv_io` |
+| `receiptmaker/output/` | `receipt_render`, `receipt_signing`, `receipt_service` |
+| `receiptmaker/ui/` | `main_window`, `settings_ui` |
+| `receiptmaker/tools/` | `cli`, `keygen`, `verify_receipt` |
+
+`config.BASE_DIR` is computed three levels up from `receiptmaker/core/config.py`, so the project
+root stays the place `Templates/`, `appsettings.json` and `invoices/` are found. `receipt_signing`
+works the same root out for itself rather than importing `config`, which is deliberate: it has to
+stay usable standalone by anyone reimplementing verification.
+
 ## The layering rule
 
-**`config`, `money`, `template_engine`, `receipt_render`, `receipt_service`,
-`product_catalogue`, `receipt_history`, `invoice_counter`, `receipt_signing`, `line_units`,
-`installments`, `shipments`, `payment_methods` and `cli` must never import tkinter.**
+**Nothing outside `receiptmaker/ui/` may import tkinter, and nothing outside it may import
+`receiptmaker.ui`.**
 
-Only `main.py` and `settings_ui.py` are GUI. Two tests assert this by importing the render path in
-a subprocess and checking `tkinter` is absent from `sys.modules`. It is what lets the golden gate
-and most of the suite run without a display.
+`ui` may import anything; nothing may import `ui`. Four tests assert this: two import the render
+path in a subprocess and check `tkinter` is absent from `sys.modules`, and two in
+`tests/test_layout.py` parse every module in the package — catching a lazy import inside a function
+body, which is where the rule actually gets broken. It is what lets the golden gate and most of the
+suite run without a display.
+
+`tests/test_layout.py` also parses every import in the package and in the suite and fails on any
+that still names a module by its old flat, pre-package name.
 
 ## Modules
 
 | Module | Responsibility |
 |---|---|
-| `main.py` | The tkinter GUI. Form, item dialog, menus, threaded generation behind a modal progress dialog. |
-| `settings_ui.py` | Every in-app editor: Settings, Fields & Columns, Signing Keys, Receipt History, Products, and the product picker. |
-| `config.py` | All configuration. Paths, schema version, migration, validation, atomic writes, `strings.json`, `fields.json`, `state.json`. |
-| `template_engine.py` | The deliberately dumb placeholder engine. `{{key}}`, `{{key\|raw}}`, `{{#if}}`, dotted keys. Compile-time linting. |
-| `receipt_render.py` | Builds the receipt HTML from `Templates/` + config + data. Owns money formatting and the arithmetic. |
-| `receipt_service.py` | Headless orchestration: numbering, filenames, Playwright render, signing, history, stock. |
-| `invoice_counter.py` | The invoice sequence. Cross-process locking, reserve-and-keep, reconciliation. |
-| `receipt_signing.py` | PAdES signing, verification, key generation and import. No GUI, no config coupling. |
-| `receipt_history.py` | The record of every generated receipt, and reloading one. |
-| `product_catalogue.py` | Products, variants, lookup, pricing arithmetic, stock deduction. |
-| `money.py` | `to_decimal` and `quantize`, and nothing else. At the bottom of the import graph so every module that touches money rounds the same way. |
-| `line_units.py` | Per-unit values: one serial number, and optionally one shop-assigned ID, for each thing sold. |
-| `installments.py` | Instalment plans: period, deposit, monthly. Scope exclusivity and the financed total. |
-| `shipments.py` | Shipping charged per group of lines: grouping, the stable sort, the neutral markers. |
-| `payment_methods.py` | What the customer pays with and what it costs, keeping a government levy and a processor's fee apart. |
-| `csv_io.py` | CSV views: products both ways, receipt history out only. |
-| `drafts.py` | Unfinished receipts. Consumes no invoice number. |
-| `cli.py` | Headless entry point. `--render-html` (the golden target), `--check`, `--config-dir`. |
-| `keygen.py`, `verify_receipt.py` | Command-line signing helpers; the reference verifier. |
+| `ui/main_window.py` | The tkinter GUI. Form, item dialog, menus, threaded generation behind a modal progress dialog. |
+| `ui/settings_ui.py` | Every in-app editor: Settings, Fields & Columns, Signing Keys, Receipt History, Products, and the product picker. |
+| `core/config.py` | All configuration. Paths, schema version, migration, validation, atomic writes, `strings.json`, `fields.json`, `state.json`. |
+| `core/template_engine.py` | The deliberately dumb placeholder engine. `{{key}}`, `{{key\|raw}}`, `{{#if}}`, dotted keys. Compile-time linting. |
+| `output/receipt_render.py` | Builds the receipt HTML from `Templates/` + config + data. Owns money formatting and the arithmetic. |
+| `output/receipt_service.py` | Headless orchestration: numbering, filenames, Playwright render, signing, history, stock. |
+| `storage/invoice_counter.py` | The invoice sequence. Cross-process locking, reserve-and-keep, reconciliation. |
+| `output/receipt_signing.py` | PAdES signing, verification, key generation and import. No GUI, no config coupling. |
+| `storage/receipt_history.py` | The record of every generated receipt, and reloading one. |
+| `storage/product_catalogue.py` | Products, variants, lookup, pricing arithmetic, stock deduction. |
+| `core/money.py` | `to_decimal` and `quantize`, and nothing else. At the bottom of the import graph so every module that touches money rounds the same way. |
+| `pricing/line_amounts.py` | Whether a plain discount or tax on a line is per line or per item, and what a trailing `%` means. |
+| `pricing/line_units.py` | Per-unit values: one serial number, and optionally one shop-assigned ID, for each thing sold. |
+| `pricing/installments.py` | Instalment plans: period, deposit, monthly. Scope exclusivity and the financed total. |
+| `pricing/shipments.py` | Shipping charged per group of lines: grouping, the stable sort, the neutral markers. |
+| `pricing/payment_methods.py` | What the customer pays with and what it costs, keeping a government levy and a processor's fee apart. |
+| `storage/csv_io.py` | CSV views: products both ways, receipt history out only. |
+| `storage/drafts.py` | Unfinished receipts. Consumes no invoice number. |
+| `tools/cli.py` | Headless entry point. `--render-html` (the golden target), `--check`, `--config-dir`. |
+| `tools/keygen.py`, `tools/verify_receipt.py` | Command-line signing helpers; the reference verifier. |
 
 ## Data files
 

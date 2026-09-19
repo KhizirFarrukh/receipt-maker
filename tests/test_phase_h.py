@@ -16,8 +16,8 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config             # noqa: E402
-import receipt_render     # noqa: E402
+from receiptmaker.core import config             # noqa: E402
+from receiptmaker.output import receipt_render     # noqa: E402
 
 # A one-pixel PNG; enough to be a real image file on disk.
 PNG_BYTES = bytes.fromhex(
@@ -102,7 +102,7 @@ class MissingLogoIsReported(TempApp):
         self.assertIn("not found", str(ctx.exception))
 
     def test_check_reports_the_problem(self):
-        import cli
+        from receiptmaker.tools import cli
         self.write_image("logo.png.png")
         code = cli.run_check()
         self.assertEqual(code, cli.EXIT_OK, "a missing logo is a warning, not a failure")
@@ -112,7 +112,7 @@ class FooterPolicyLinks(TempApp):
     """The footer links to the policy pages, and never to nowhere."""
 
     def footer_body(self):
-        import receipt_render
+        from receiptmaker.output import receipt_render
         receipt_render.clear_template_cache()
         return receipt_render.build_page_footer_template().split("</style>")[1]
 
@@ -158,7 +158,7 @@ class FooterPolicyLinks(TempApp):
         self.assertIn("mailto:legal@example.com", self.footer_body())
 
     def test_safe_url_helper(self):
-        import receipt_render
+        from receiptmaker.output import receipt_render
         self.assertEqual(receipt_render.safe_url("https://x.test"), "https://x.test")
         self.assertEqual(receipt_render.safe_url("javascript:alert(1)"), "")
         self.assertEqual(receipt_render.safe_url("file:///etc/passwd"), "")
@@ -196,23 +196,23 @@ class RememberedAnswers(TempApp):
         """Guards the hang this change first caused: _on_generated must not open
         a dialog when the user has said 'stop asking'."""
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
 
         config.update_app_settings(
             {"ui": {"ask_open_folder": False, "open_folder_after_generate": False}})
 
         asked, opened = [], []
-        original_ask, original_open = main.ask_with_memory, main.ReceiptApp._open_folder
+        original_ask, original_open = main_window.ask_with_memory, main_window.ReceiptApp._open_folder
         root = tk.Tk()
         root.withdraw()
         try:
-            main.ask_with_memory = lambda *a, **k: asked.append(1) or (False, False)
-            main.ReceiptApp._open_folder = staticmethod(lambda path: opened.append(path))
-            app = main.ReceiptApp(root)
+            main_window.ask_with_memory = lambda *a, **k: asked.append(1) or (False, False)
+            main_window.ReceiptApp._open_folder = staticmethod(lambda path: opened.append(path))
+            app = main_window.ReceiptApp(root)
             app._on_generated(os.path.join(self.dir, "invoices", "x.pdf"), True)
         finally:
-            main.ask_with_memory = original_ask
-            main.ReceiptApp._open_folder = original_open
+            main_window.ask_with_memory = original_ask
+            main_window.ReceiptApp._open_folder = original_open
             root.destroy()
 
         self.assertEqual(asked, [], "it should not ask once the answer is remembered")
@@ -220,23 +220,23 @@ class RememberedAnswers(TempApp):
 
     def test_remembered_yes_opens_without_asking(self):
         import tkinter as tk
-        import main
+        from receiptmaker.ui import main_window
 
         config.update_app_settings(
             {"ui": {"ask_open_folder": False, "open_folder_after_generate": True}})
 
         asked, opened = [], []
-        original_ask, original_open = main.ask_with_memory, main.ReceiptApp._open_folder
+        original_ask, original_open = main_window.ask_with_memory, main_window.ReceiptApp._open_folder
         root = tk.Tk()
         root.withdraw()
         try:
-            main.ask_with_memory = lambda *a, **k: asked.append(1) or (False, False)
-            main.ReceiptApp._open_folder = staticmethod(lambda path: opened.append(path))
-            app = main.ReceiptApp(root)
+            main_window.ask_with_memory = lambda *a, **k: asked.append(1) or (False, False)
+            main_window.ReceiptApp._open_folder = staticmethod(lambda path: opened.append(path))
+            app = main_window.ReceiptApp(root)
             app._on_generated(os.path.join(self.dir, "invoices", "x.pdf"), True)
         finally:
-            main.ask_with_memory = original_ask
-            main.ReceiptApp._open_folder = original_open
+            main_window.ask_with_memory = original_ask
+            main_window.ReceiptApp._open_folder = original_open
             root.destroy()
 
         self.assertEqual(asked, [])

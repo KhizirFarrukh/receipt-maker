@@ -13,9 +13,9 @@ issue the same one.
 import os
 import re
 
-import config
-import invoice_counter
-from config import (
+from receiptmaker.core import config
+from receiptmaker.storage import invoice_counter
+from receiptmaker.core.config import (
     PDF_MARGIN_TOP,
     PDF_MARGIN_BOTTOM,
     PDF_MARGIN_LEFT,
@@ -23,10 +23,10 @@ from config import (
     load_app_settings,
     load_filename_fields,
 )
-import product_catalogue
-import receipt_history
-import receipt_render
-import receipt_signing
+from receiptmaker.storage import product_catalogue
+from receiptmaker.storage import receipt_history
+from receiptmaker.output import receipt_render
+from receiptmaker.output import receipt_signing
 
 # Number of progress steps generate() reports (for a determinate progress bar).
 GENERATION_STEPS = 4
@@ -35,7 +35,7 @@ GENERATION_STEPS = 4
 # ------------------- signing glue -------------------
 def resolve_app_path(path):
     """Resolve a config path against APP_DIR (leaves absolute paths untouched)."""
-    from config import APP_DIR
+    from receiptmaker.core.config import APP_DIR
     clean = str(path).strip()
     if not clean:
         return ""

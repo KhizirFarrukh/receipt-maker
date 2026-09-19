@@ -21,10 +21,10 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import main                # noqa: E402
-import product_catalogue   # noqa: E402
-import receipt_render      # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.ui import main_window                # noqa: E402
+from receiptmaker.storage import product_catalogue   # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
 import tk_support          # noqa: E402
@@ -65,19 +65,19 @@ class Section6TestCase(unittest.TestCase):
 
         # Nothing may open a real modal, and nothing may block on wait_window.
         self.infos, self.errors = [], []
-        self._saved = (main.messagebox.showinfo, main.messagebox.showerror,
-                       main.messagebox.askyesno)
-        main.messagebox.showinfo = lambda t, m, **k: self.infos.append(m)
-        main.messagebox.showerror = lambda t, m, **k: self.errors.append(m)
-        main.messagebox.askyesno = lambda *a, **k: True
+        self._saved = (main_window.messagebox.showinfo, main_window.messagebox.showerror,
+                       main_window.messagebox.askyesno)
+        main_window.messagebox.showinfo = lambda t, m, **k: self.infos.append(m)
+        main_window.messagebox.showerror = lambda t, m, **k: self.errors.append(m)
+        main_window.messagebox.askyesno = lambda *a, **k: True
         self.root.wait_window = lambda *a, **k: None
 
-        self.app = main.ReceiptApp(self.root)
+        self.app = main_window.ReceiptApp(self.root)
         self.app.root.wait_window = lambda *a, **k: None
 
     def tearDown(self):
-        (main.messagebox.showinfo, main.messagebox.showerror,
-         main.messagebox.askyesno) = self._saved
+        (main_window.messagebox.showinfo, main_window.messagebox.showerror,
+         main_window.messagebox.askyesno) = self._saved
         tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         receipt_render.clear_template_cache()
@@ -169,7 +169,7 @@ class TheShipmentEditor(Section6TestCase):
                 field["enabled"] = True
         config.save_fields(fields)
         self.root.wait_window = lambda *a, **k: None
-        self.app = main.ReceiptApp(tk.Toplevel(self.root))
+        self.app = main_window.ReceiptApp(tk.Toplevel(self.root))
         self.app.root.wait_window = lambda *a, **k: None
 
     def test_it_asks_for_a_shipment_first(self):
@@ -218,7 +218,7 @@ class TheReceiptFieldForm(Section6TestCase):
             if field["key"] == "notes":
                 field["enabled"] = True
         config.save_fields(fields)
-        app = main.ReceiptApp(tk.Toplevel(self.root))
+        app = main_window.ReceiptApp(tk.Toplevel(self.root))
         self.assertIn("notes", app.receipt_field_texts)
 
     def test_it_builds_with_no_receipt_fields_at_all(self):

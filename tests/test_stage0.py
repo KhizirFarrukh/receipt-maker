@@ -21,7 +21,7 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import cli  # noqa: E402
+from receiptmaker.tools import cli  # noqa: E402
 
 FIX = os.path.join(PROJ, "tests", "fixtures")
 GOLDEN_INPUT = os.path.join(FIX, "golden_input.json")
@@ -51,11 +51,11 @@ def receipt_app():
     teardown independent of test ordering.
     """
     import tkinter as tk
-    import main
+    from receiptmaker.ui import main_window
 
     root = tk.Tk()
     root.withdraw()
-    app = main.ReceiptApp(root)
+    app = main_window.ReceiptApp(root)
     try:
         yield app, root
     finally:
@@ -106,8 +106,8 @@ class Stage0Fidelity(unittest.TestCase):
 
     def test_headless_matches_gui(self):
         import tkinter as tk
-        import main
-        import receipt_render
+        from receiptmaker.ui import main_window
+        from receiptmaker.output import receipt_render
 
         data = cli.load_data(GOLDEN_INPUT)
         html_headless = cli.render_html_from_data(data, normalize=True)
@@ -155,7 +155,8 @@ class Stage1Layering(unittest.TestCase):
         import subprocess
 
         code = (
-            "import sys, cli;"
+            "import sys;"
+            "from receiptmaker.tools import cli;"
             "cli.render_html_from_data(cli.load_data(r'%s'));"
             "assert 'tkinter' not in sys.modules, 'tkinter leaked into render path';"
             "print('ok')" % GOLDEN_INPUT.replace("\\", "\\\\")
@@ -171,7 +172,9 @@ class Stage1Layering(unittest.TestCase):
         import subprocess
 
         code = (
-            "import sys, config, receipt_render, receipt_service;"
+            "import sys;"
+            "from receiptmaker.core import config;"
+            "from receiptmaker.output import receipt_render, receipt_service;"
             "assert 'tkinter' not in sys.modules, 'tkinter leaked';"
             "print('ok')"
         )
@@ -202,14 +205,14 @@ class Stage1GenerationUX(unittest.TestCase):
             time.sleep(0.005)
 
     def test_success_path(self):
-        import main
-        import receipt_service
+        from receiptmaker.ui import main_window
+        from receiptmaker.output import receipt_service
 
         # Stub the success prompt, not messagebox: _on_generated asks through
         # ask_with_memory (it carries a "don't ask again" checkbox). Leaving this
         # pointed at messagebox.askyesno makes the suite open a real modal dialog
         # and hang forever rather than fail.
-        orig_gen, orig_ask = receipt_service.generate, main.ask_with_memory
+        orig_gen, orig_ask = receipt_service.generate, main_window.ask_with_memory
         steps = []
 
         # **kwargs: generate() grows optional arguments, and a stub with a
@@ -224,7 +227,7 @@ class Stage1GenerationUX(unittest.TestCase):
 
         try:
             receipt_service.generate = fake_generate
-            main.ask_with_memory = lambda *a, **k: (False, False)  # skip folder prompt
+            main_window.ask_with_memory = lambda *a, **k: (False, False)  # skip folder prompt
 
             with receipt_app() as (app, root):
                 self.assertEqual(str(app.generate_button["state"]), "normal")
@@ -236,13 +239,13 @@ class Stage1GenerationUX(unittest.TestCase):
                 self.assertEqual(steps, [1, 2, 3, 4], "progress steps not reported")
                 self.assertIn("signed", app.status_label["text"])
         finally:
-            receipt_service.generate, main.ask_with_memory = orig_gen, orig_ask
+            receipt_service.generate, main_window.ask_with_memory = orig_gen, orig_ask
 
     def test_error_path_shows_diagnostic(self):
-        import main
-        import receipt_service
+        from receiptmaker.ui import main_window
+        from receiptmaker.output import receipt_service
 
-        orig_gen, orig_err = receipt_service.generate, main.show_error
+        orig_gen, orig_err = receipt_service.generate, main_window.show_error
         captured = {}
 
         def boom(data, out_path, progress_cb=None, **kwargs):
@@ -250,7 +253,7 @@ class Stage1GenerationUX(unittest.TestCase):
 
         try:
             receipt_service.generate = boom
-            main.show_error = lambda parent, title, summary, detail=None: captured.update(
+            main_window.show_error = lambda parent, title, summary, detail=None: captured.update(
                 title=title, summary=summary, detail=detail)
 
             with receipt_app() as (app, root):
@@ -263,7 +266,7 @@ class Stage1GenerationUX(unittest.TestCase):
                                      "no traceback passed to show_error")
                 self.assertIn("PDF generation failed", app.status_label["text"])
         finally:
-            receipt_service.generate, main.show_error = orig_gen, orig_err
+            receipt_service.generate, main_window.show_error = orig_gen, orig_err
 
     def test_concurrent_guard(self):
         with receipt_app() as (app, _root):

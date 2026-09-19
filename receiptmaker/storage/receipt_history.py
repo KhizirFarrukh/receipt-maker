@@ -28,8 +28,8 @@ import json
 import logging
 import os
 
-import config
-import line_units
+from receiptmaker.core import config
+from receiptmaker.pricing import line_units
 
 logger = logging.getLogger("receipt_maker")
 
@@ -191,7 +191,7 @@ def void(invoice_no, reason="", settings=None):
 
     returned = False
     try:
-        import product_catalogue
+        from receiptmaker.storage import product_catalogue
         # An empty sale against what this receipt took: the deltas come out
         # negative, so the same tested path that deducted the stock puts it
         # back, rather than a second implementation that could disagree.
@@ -300,7 +300,7 @@ def to_form_data(entry):
 
 def summarise(entry, currency=None):
     """(date, invoice_no, customer, total, status) for the history list."""
-    import receipt_render
+    from receiptmaker.output import receipt_render
 
     currency = currency if currency is not None else config.DEFAULT_APP_SETTINGS["currency"]
     decimals = currency.get("decimals", 2)

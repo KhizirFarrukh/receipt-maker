@@ -18,10 +18,10 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config             # noqa: E402
+from receiptmaker.core import config             # noqa: E402
 import tk_support          # noqa: E402
-import invoice_counter    # noqa: E402
-import receipt_service    # noqa: E402
+from receiptmaker.storage import invoice_counter    # noqa: E402
+from receiptmaker.output import receipt_service    # noqa: E402
 
 
 class CounterWorksInAFreshFolder(unittest.TestCase):
@@ -119,17 +119,17 @@ class StartupReportsConfigProblemsReadably(unittest.TestCase):
         config.set_app_dir(self.dir)
 
     def test_launch_reports_a_config_error_instead_of_crashing(self):
-        import main
+        from receiptmaker.ui import main_window
 
         self.write_broken("currency", "decimals", 99)
         shown = {}
-        original = main.show_error
+        original = main_window.show_error
         try:
-            main.show_error = lambda parent, title, summary, detail=None: shown.update(
+            main_window.show_error = lambda parent, title, summary, detail=None: shown.update(
                 title=title, summary=summary)
-            code = main.launch()
+            code = main_window.launch()
         finally:
-            main.show_error = original
+            main_window.show_error = original
 
         self.assertEqual(code, 2, "a settings problem should exit non-zero, not raise")
         self.assertIn("settings", shown.get("title", "").lower())
@@ -276,8 +276,8 @@ class TreeviewEatsLeadingZeros(unittest.TestCase):
         config.set_app_dir(self.dir)
         self.root = tk.Tk()
         self.root.withdraw()
-        import main
-        self.app = main.ReceiptApp(self.root)
+        from receiptmaker.ui import main_window
+        self.app = main_window.ReceiptApp(self.root)
 
     def tearDown(self):
         tk_support.destroy(self)
@@ -343,20 +343,20 @@ class RetiredCertificatesFollowTheirKey(unittest.TestCase):
         shutil.rmtree(self.other, ignore_errors=True)
 
     def make_key(self, folder):
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
         return receipt_signing.generate_key_pair(
             os.path.join(folder, "private_key.pem"),
             os.path.join(folder, "certificate.pem"),
             common_name="Test", org_name="Test")
 
     def test_the_archive_sits_beside_the_certificate(self):
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
         cert = os.path.join(self.dir, "certificate.pem")
         self.assertEqual(receipt_signing.known_certs_dir(cert),
                          os.path.join(self.dir, "previous_certificates"))
 
     def test_rotating_a_key_archives_next_to_that_key(self):
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
         _, cert = self.make_key(self.dir)
         receipt_signing.remember_current_certificate(cert)
         self.assertTrue(os.path.isdir(
@@ -364,7 +364,7 @@ class RetiredCertificatesFollowTheirKey(unittest.TestCase):
 
     def test_it_does_not_write_into_the_module_directory(self):
         """The actual leak: certificates landing in the project folder."""
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
         module_archive = os.path.join(
             os.path.dirname(os.path.abspath(receipt_signing.__file__)),
             "signing", "previous_certificates")
@@ -380,7 +380,7 @@ class RetiredCertificatesFollowTheirKey(unittest.TestCase):
                          "archiving wrote into the project's own signing folder")
 
     def test_two_key_locations_keep_separate_archives(self):
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
         _, first = self.make_key(self.dir)
         _, second = self.make_key(self.other)
         receipt_signing.remember_current_certificate(first)
@@ -389,7 +389,7 @@ class RetiredCertificatesFollowTheirKey(unittest.TestCase):
                          [second], "the other key's archive must not leak in")
 
     def test_known_paths_lists_the_current_certificate_first(self):
-        import receipt_signing
+        from receiptmaker.output import receipt_signing
         _, cert = self.make_key(self.dir)
         receipt_signing.remember_current_certificate(cert)
         paths = receipt_signing.known_certificate_paths(cert)
@@ -478,7 +478,7 @@ class PartlyTaggedOrderLostItsShipping(unittest.TestCase):
         return item
 
     def test_the_flat_fee_survives_alongside_a_group(self):
-        import shipments
+        from receiptmaker.pricing import shipments
         items = [self.line("A", "W1"), self.line("B")]
         rows, total = shipments.rows(
             {"shipments": [{"id": "W1", "fee": "500"}]}, items, 2,
@@ -487,7 +487,7 @@ class PartlyTaggedOrderLostItsShipping(unittest.TestCase):
         self.assertEqual(len(rows), 2)
 
     def test_the_untagged_lines_get_their_own_row(self):
-        import shipments
+        from receiptmaker.pricing import shipments
         items = [self.line("A", "W1"), self.line("B")]
         rows, _ = shipments.rows({"shipments": [{"id": "W1", "fee": "500"}]},
                                  items, 2, flat_shipping="250")
@@ -496,14 +496,14 @@ class PartlyTaggedOrderLostItsShipping(unittest.TestCase):
 
     def test_the_marker_counts_it(self):
         """Two charges means "1 of 2", or the second looks like a mistake."""
-        import shipments
+        from receiptmaker.pricing import shipments
         items = [self.line("A", "W1"), self.line("B")]
         rows, _ = shipments.rows({"shipments": [{"id": "W1", "fee": "500"}]},
                                  items, 2, flat_shipping="250")
         self.assertEqual([r[2] for r in rows], [2, 2])
 
     def test_no_flat_fee_means_no_extra_row(self):
-        import shipments
+        from receiptmaker.pricing import shipments
         items = [self.line("A", "W1"), self.line("B")]
         rows, total = shipments.rows({"shipments": [{"id": "W1", "fee": "500"}]},
                                      items, 2, flat_shipping=0)
@@ -511,7 +511,7 @@ class PartlyTaggedOrderLostItsShipping(unittest.TestCase):
         self.assertEqual(total, Decimal("500.00"))
 
     def test_every_line_tagged_needs_no_extra_row(self):
-        import shipments
+        from receiptmaker.pricing import shipments
         items = [self.line("A", "W1"), self.line("B", "W2")]
         rows, _ = shipments.rows(
             {"shipments": [{"id": "W1", "fee": "5"}, {"id": "W2", "fee": "7"}]},
@@ -519,7 +519,7 @@ class PartlyTaggedOrderLostItsShipping(unittest.TestCase):
         self.assertEqual(len(rows), 2, "nothing is ungrouped, so no flat row")
 
     def test_an_untagged_receipt_is_unchanged(self):
-        import shipments
+        from receiptmaker.pricing import shipments
         rows, total = shipments.rows({}, [self.line("A"), self.line("B")], 2,
                                      flat_shipping="250")
         self.assertEqual(rows, [])

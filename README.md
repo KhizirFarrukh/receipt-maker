@@ -264,12 +264,47 @@ check — pin your published `certificate.pem` as the trust root, accept an uplo
 and report Verified / Invalid / Not found. (A Shopify storefront cannot do this in
 Liquid; it needs a serverless function or a small microservice.)
 
+## Project Layout
+
+Run everything from the project root. The four scripts there are launchers; the
+code they start lives in `receiptmaker/`.
+
+```text
+main.py              open the app
+cli.py               headless: --doctor, --check, --render-html, --render
+keygen.py            create the signing key
+verify_receipt.py    check a receipt's signature
+
+receiptmaker/
+  core/              paths and config, money arithmetic, the template engine
+  pricing/           what a line comes to: amounts, per-unit values,
+                     instalments, shipments, payment charges
+  storage/           what outlives a run: products, history, the invoice
+                     counter, drafts, CSV import/export
+  output/            render the HTML, sign the PDF, and the service that
+                     sequences the two
+  ui/                tkinter — the main window and the settings dialogs
+  tools/             the code behind the four launchers
+
+Templates/           the receipt layout, editable (see Templates below)
+packaging/           PyInstaller spec and the build scripts
+tests/               the suite, including the golden-file gate
+```
+
+Nothing outside `receiptmaker/ui/` imports tkinter. That is what lets the
+renderer, the CLI and the golden gate run anywhere Python runs, and the test
+suite asserts it rather than trusting it.
+
+The JSON beside `main.py` — `appsettings.json`, `fields.json`, `strings.json`,
+`filename_config.json` — is your configuration, not code. It stays at the root
+because that is where it sits beside the executable in a packaged install.
+
 ## Build Executable
 
 ### Linux
 
 ```bash
-bash build_exe.sh
+bash packaging/build_exe.sh
 ```
 
 The packaged app is created at:
@@ -283,7 +318,7 @@ dist/ReceiptGenerator/ReceiptGenerator
 Run this from PowerShell:
 
 ```powershell
-.\build_exe.ps1
+.\packaging\build_exe.ps1
 ```
 
 The packaged app is created at:

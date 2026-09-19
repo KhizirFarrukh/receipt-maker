@@ -23,8 +23,8 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import receipt_render      # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
 
@@ -104,7 +104,7 @@ class ItIsNotADigitalSignature(unittest.TestCase):
         self.assertFalse(settings["signature_image"]["enabled"])
 
     def test_the_settings_dialog_says_it_is_decorative(self):
-        import settings_ui
+        from receiptmaker.ui import settings_ui
         rows = [row for _, rows in settings_ui.SETTINGS_SECTIONS for row in rows]
         help_text = next(options.get("help", "")
                          for path, _, _, options in rows

@@ -19,7 +19,14 @@ import re
 import sys
 
 # ------------------- file paths -------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# The project root: the folder holding Templates/, appsettings.json and the
+# invoices/ output folder. This module lives at receiptmaker/core/config.py, so
+# the root is three levels up. Neither path below uses it in a packaged build --
+# APP_DIR comes from the executable and RESOURCE_DIR from PyInstaller's
+# _MEIPASS -- but unfrozen it is what makes a plain `python main.py` find the
+# same files it always did.
+BASE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else BASE_DIR
 RESOURCE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
 
@@ -958,7 +965,7 @@ def validate(settings, filename=None):
         raise ConfigError("must be a list of payment methods", filename,
                           "payment.methods")
     try:
-        import payment_methods
+        from receiptmaker.pricing import payment_methods
         payment_methods.validate(settings, filename)
     except ImportError:
         pass

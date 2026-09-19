@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")"
+# Everything below is relative to the project root, not to packaging/.
+cd "$(dirname "$0")/.."
 
-python -m pip install -r requirements-build.txt
+python -m pip install -r packaging/requirements-build.txt
 
 PLAYWRIGHT_BROWSER_DIR="${HOME}/.cache/ms-playwright"
 if [ -d "$PLAYWRIGHT_BROWSER_DIR" ] && ls "$PLAYWRIGHT_BROWSER_DIR"/chromium-* &>/dev/null 2>&1; then
@@ -12,7 +13,7 @@ else
     python -m playwright install chromium
 fi
 
-python -m PyInstaller --clean --noconfirm receipt_maker.spec
+python -m PyInstaller --clean --noconfirm packaging/receipt_maker.spec
 
 DIST_DIR="dist/ReceiptGenerator"
 

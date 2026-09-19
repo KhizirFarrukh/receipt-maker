@@ -25,10 +25,10 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-import config              # noqa: E402
-import main                # noqa: E402
-import product_catalogue   # noqa: E402
-import receipt_render      # noqa: E402
+from receiptmaker.core import config              # noqa: E402
+from receiptmaker.ui import main_window                # noqa: E402
+from receiptmaker.storage import product_catalogue   # noqa: E402
+from receiptmaker.output import receipt_render      # noqa: E402
 
 import gate_env            # noqa: E402
 import tk_support          # noqa: E402
@@ -66,16 +66,16 @@ class ScanTestCase(unittest.TestCase):
 
         self.root = tk.Tk()
         self.root.withdraw()
-        self.app = main.ReceiptApp(self.root)
+        self.app = main_window.ReceiptApp(self.root)
 
         self.asked = []
-        self._askyesno = main.messagebox.askyesno
-        main.messagebox.askyesno = lambda t, m, **k: (
+        self._askyesno = main_window.messagebox.askyesno
+        main_window.messagebox.askyesno = lambda t, m, **k: (
             self.asked.append(m) or self.answer)
         self.answer = True
 
     def tearDown(self):
-        main.messagebox.askyesno = self._askyesno
+        main_window.messagebox.askyesno = self._askyesno
         tk_support.destroy(self)
         config.set_app_dir(self._app_dir)
         receipt_render.clear_template_cache()
@@ -170,7 +170,7 @@ class RescanningIncrements(ScanTestCase):
         config.save_fields(fields)
         self.app.fields = config.load_fields()
 
-        import line_units
+        from receiptmaker.pricing import line_units
         self.scan("5901234123457")
         self.scan("5901234123457")
         self.scan("5901234123457")

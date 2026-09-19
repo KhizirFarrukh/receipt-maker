@@ -28,7 +28,7 @@ import io
 import logging
 import os
 
-import config
+from receiptmaker.core import config
 
 logger = logging.getLogger("receipt_maker")
 
@@ -200,7 +200,7 @@ def rows_to_products(rows):
 
 def export_products(path, catalogue=None):
     """Write the catalogue to `path`. Returns the number of rows written."""
-    import product_catalogue
+    from receiptmaker.storage import product_catalogue
     catalogue = catalogue if catalogue is not None else product_catalogue.load()
     rows = products_to_rows(catalogue)
     _write(path, PRODUCT_COLUMNS, rows)
@@ -215,7 +215,7 @@ def import_products(path, replace=False):
     price update from a supplier — and replacing wholesale would delete
     everything not in it. `replace=True` is there for a deliberate full reload.
     """
-    import product_catalogue
+    from receiptmaker.storage import product_catalogue
 
     rows = _read(path, PRODUCT_COLUMNS)
     incoming = rows_to_products(rows)
@@ -254,7 +254,7 @@ def history_to_rows(entries, currency=None):
     in a file and exactly right in a spreadsheet, where every row has to stand
     on its own to be filtered or summed.
     """
-    import receipt_render
+    from receiptmaker.output import receipt_render
 
     currency = currency or config.DEFAULT_APP_SETTINGS["currency"]
     decimals = currency.get("decimals", 2)
@@ -309,7 +309,7 @@ def history_to_rows(entries, currency=None):
 
 def export_history(path, entries=None, currency=None):
     """Write the receipt history to `path`. Returns the number of rows."""
-    import receipt_history
+    from receiptmaker.storage import receipt_history
     entries = entries if entries is not None else receipt_history.entries()
     rows = history_to_rows(entries, currency)
     _write(path, HISTORY_COLUMNS, rows)

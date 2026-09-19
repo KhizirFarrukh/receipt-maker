@@ -31,7 +31,7 @@ import os
 import re
 import time
 
-import config
+from receiptmaker.core import config
 
 logger = logging.getLogger("receipt_maker")
 

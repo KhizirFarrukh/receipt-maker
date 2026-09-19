@@ -14,8 +14,8 @@ repository the single source of truth, and still exercises the install path.
 import os
 import shutil
 
-import config
-import receipt_render
+from receiptmaker.core import config
+from receiptmaker.output import receipt_render
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATE_ENV = os.path.join(PROJ, "tests", "fixtures", "env")
